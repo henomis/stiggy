@@ -33,7 +33,7 @@ jobs:
           cache: false
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           # NOTE: Keep this in sync with the version in the Makefile `lint` target.
           # v2.12.2 is built with go1.26, so it can lint this go 1.26.4 module
