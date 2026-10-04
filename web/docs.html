@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stiggy — documentation</title>
+<meta name="description" content="Documentation for stiggy: fleet reference, flows and steps, crews and patterns, deployment, CLI, and the Go library.">
+<style>
+  :root {
+    --bg:        #0e0f0d;
+    --bg-soft:   #16180f;
+    --panel:     #1a1c14;
+    --panel-2:   #20231a;
+    --border:    #2c2f22;
+    --ink:       #ecead9;
+    --ink-soft:  #b9b8a4;
+    --ink-faint: #8a8a76;
+    --amber:     #e8b84b;
+    --amber-dim: #c79a37;
+    --green:     #9bcf6a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  header.bar { border-bottom: 1px solid var(--border); background: rgba(14,15,13,0.85);
+    backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
+  .bar .wrap { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: -0.02em; color: var(--ink); }
+  .brand .dot { color: var(--amber); }
+  .bar nav { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+  .bar nav a { color: var(--ink-soft); }
+  .bar nav a:hover { color: var(--ink); text-decoration: none; }
+
+  .hero { padding: 84px 0 64px; border-bottom: 1px solid var(--border); position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 60% 50% at 70% -10%, rgba(232,184,75,0.10), transparent 70%); }
+  .hero .wrap { position: relative; }
+  .eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--amber-dim); margin: 0 0 18px; }
+  h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 20px; font-weight: 800; }
+  h1 .accent { color: var(--amber); }
+  .lede { font-size: clamp(17px, 2.4vw, 20px); color: var(--ink-soft); max-width: 640px; margin: 0 0 32px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 14px; font-weight: 600;
+    padding: 11px 18px; border-radius: 8px; border: 1px solid var(--border);
+    transition: transform .08s ease, border-color .15s ease, background .15s ease; }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: var(--amber); color: #1a1500; border-color: var(--amber); }
+  .btn.primary:hover { background: #f2c65c; }
+  .btn.ghost { color: var(--ink); background: var(--panel); }
+  .btn.ghost:hover { border-color: var(--amber-dim); }
+
+  section { padding: 64px 0; border-bottom: 1px solid var(--border); }
+  h2 { font-size: clamp(24px, 4vw, 30px); letter-spacing: -0.02em; margin: 0 0 10px; font-weight: 750; }
+  h2 .num { font-family: var(--mono); color: var(--amber-dim); font-size: 0.65em; margin-right: 12px; font-weight: 600; }
+  h3 { margin: 36px 0 14px; font-size: 17px; }
+  .sub { color: var(--ink-soft); max-width: 680px; margin: 0 0 28px; }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; transition: border-color .15s ease; }
+  .card:hover { border-color: var(--amber-dim); }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+
+  pre { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 20px; overflow-x: auto;
+    margin: 0; font-family: var(--mono); font-size: 13.5px; line-height: 1.65; color: var(--ink); }
+  code { font-family: var(--mono); font-size: 0.92em; }
+  p code, li code, td code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: var(--amber); }
+  .c-key { color: var(--amber); }
+  .c-str { color: var(--green); }
+  .c-com { color: var(--ink-faint); font-style: italic; }
+  .c-num { color: #7fb7e6; }
+  .c-cmd { color: var(--amber); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .lbl { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin: 0 0 8px; letter-spacing: 0.04em; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); background: var(--panel); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { white-space: nowrap; }
+
+  footer { padding: 48px 0 64px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; color: var(--ink-faint); font-size: 14px; }
+  footer .links { display: flex; gap: 22px; margin-left: auto; }
+  footer a { color: var(--ink-soft); }
+
+  @media (max-width: 680px) {
+    .grid, .two { grid-template-columns: 1fr; }
+    .bar nav a:not(.keep) { display: none; }
+    section { padding: 48px 0; }
+  }
+
+  .bar .inner { display: flex; align-items: center; gap: 20px; height: 60px; padding: 0 24px; max-width: 1180px; margin: 0 auto; }
+  .bar nav a.active { color: var(--amber); }
+  .shell { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; }
+  aside { position: sticky; top: 60px; align-self: start; height: calc(100vh - 60px); overflow-y: auto; padding: 32px 20px 48px; border-right: 1px solid var(--border); }
+  aside .group { margin-bottom: 24px; }
+  aside .group-title { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); margin: 0 0 10px; padding-left: 10px; }
+  aside a { display: block; padding: 5px 10px; border-radius: 6px; font-size: 14px; color: var(--ink-soft); }
+  aside a:hover { color: var(--ink); background: var(--panel); text-decoration: none; }
+  main { padding: 40px 48px 96px; min-width: 0; }
+  main > section { padding: 28px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 76px; }
+  main > section:last-child { border-bottom: none; }
+  h1.title { font-size: 38px; letter-spacing: -0.03em; margin: 8px 0 6px; font-weight: 800; }
+  .tagline { color: var(--ink-soft); font-size: 17px; margin: 0 0 8px; }
+  main h2 { font-size: 25px; margin: 0 0 14px; }
+  main h3 { font-size: 17px; margin: 26px 0 10px; font-weight: 650; }
+  p { color: var(--ink-soft); }
+  main p strong, main li strong { color: var(--ink); font-weight: 650; }
+  ul, ol { color: var(--ink-soft); padding-left: 22px; }
+  li { margin: 4px 0; }
+  pre { margin: 16px 0; font-size: 13px; line-height: 1.6; }
+  h3 code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: var(--amber); }
+  td code { white-space: nowrap; }
+  .tablewrap { margin: 16px 0; }
+  table { font-size: 13.5px; }
+  th, td { padding: 11px 16px; }
+  .note { border: 1px solid var(--border); border-left: 3px solid var(--amber-dim); background: var(--panel); border-radius: 8px; padding: 14px 18px; margin: 18px 0; font-size: 14.5px; color: var(--ink-soft); }
+  .note strong { color: var(--amber); }
+  .crumbs { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); margin-bottom: 6px; }
+  footer { border-top: 1px solid var(--border); padding: 0; }
+  footer .inner { max-width: 1180px; margin: 0 auto; padding: 32px 48px; display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; color: var(--ink-faint); font-size: 14px; }
+  footer .links { display: flex; gap: 22px; margin-left: auto; }
+  .diagram { margin: 16px 0; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 20px; overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 640px; height: auto; font-family: var(--mono); }
+  .dg-box rect { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+  .dg-hot rect { stroke: var(--amber-dim); }
+  .dg-inner rect { fill: var(--panel-2); stroke: var(--amber-dim); stroke-width: 1; stroke-dasharray: 4 3; }
+  .dg-bus rect { fill: none; stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .dg-line path { fill: none; stroke: var(--ink-faint); stroke-width: 1.6; }
+  .dg-head { fill: var(--ink-faint); }
+  .dg-t1 text { fill: var(--amber); font-size: 15px; font-weight: 700; }
+  .dg-t2 text { fill: var(--ink-soft); font-size: 12.5px; }
+  .dg-t3 text { fill: var(--green); font-size: 12.5px; }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    aside { display: none; }
+    main { padding: 32px 24px 72px; }
+    .bar nav a:not(.active):not(.home) { display: none; }
+    footer .inner { padding: 32px 24px; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="inner">
+    <a class="brand" href="index.html">stiggy<span class="dot">.</span></a>
+    <nav>
+      <a href="index.html" class="home">Home</a>
+      <a href="docs.html" class="active">Docs</a>
+      <a href="https://github.com/henomis/stiggy">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="shell">
+<aside><div class="group"><p class="group-title">Start</p><a href="#overview">Overview</a><a href="#install">Install &amp; build</a><a href="#quickstart">Quick start</a></div><div class="group"><p class="group-title">Fleet</p><a href="#structure">Fleet structure</a><a href="#models">Models</a><a href="#tools">Tools</a><a href="#agents">Agents</a><a href="#knowledge">Embedders, vector stores &amp; knowledge</a><a href="#remotes">Remotes</a></div><div class="group"><p class="group-title">Flows</p><a href="#flows">Flows &amp; steps</a><a href="#routing">Routing &amp; human in the loop</a><a href="#crews">Crews</a><a href="#patterns">Patterns</a><a href="#expose">Expose</a><a href="#schedules">Schedules</a></div><div class="group"><p class="group-title">Operate</p><a href="#deploy">Deployment &amp; roles</a><a href="#cli">CLI reference</a></div><div class="group"><p class="group-title">Go</p><a href="#go">Go library</a><a href="#examples">Examples</a></div><div class="group"><p class="group-title">Reference</p><a href="#architecture">Architecture rules</a></div></aside>
+<main>
+<div class="crumbs"><a href="index.html">stiggy</a> / docs</div>
+<h1 class="title">Documentation</h1>
+<p class="tagline">Multi-agent architectures on NATS, defined in YAML or Go.</p>
+<section id="overview"><h2>Overview</h2>
+<p><strong>stiggy</strong> deploys multi-agent architectures on NATS by gluing two libraries: <a href="https://github.com/henomis/phero">phero</a> (agents, LLMs, tools, memory, the NATS Agent Protocol) and <a href="https://github.com/henomis/packtrail">packtrail</a> (a durable, event-sourced workflow engine on JetStream). It adds crews, supervisors, swarms, human review and replay on a substrate that survives crashes and scales out.</p>
+<p>A fleet is defined once, as YAML (the <code>stiggy</code> binary) or in Go (the library), and both build the same model.</p>
+<ul>
+<li><strong>models, tools, knowledge:</strong> any LLM provider, tool, memory backend or vector store phero offers, plus MCP servers;</li>
+<li><strong>agents:</strong> a model, a role/goal/backstory, tools, memory, knowledge and delegates;</li>
+<li><strong>flows:</strong> packtrail flows whose steps run agents, with every packtrail feature: choices, fan-out/join, maps, subflows, waits, retries, budgets, fork, rerun and time travel;</li>
+<li><strong>crews and patterns:</strong> task crews and the supervisor, swarm, evaluator-optimizer, debate and plan-execute patterns, expanded into flows.</li>
+</ul>
+<h3>How it works</h3>
+<figure class="diagram">
+<svg viewBox="0 12 880 342" role="img" aria-labelledby="dg-t dg-d" xmlns="http://www.w3.org/2000/svg">
+<title id="dg-t">How stiggy works</title>
+<desc id="dg-d">fleet.yaml and Go options both build a spec.Fleet, which compile validates into a plan. The plan runs on a packtrail engine and on workers, one per agent, activity or remote, each running a fresh phero agent per job. Everything communicates over NATS JetStream.</desc>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-head"/></marker>
+</defs>
+<g class="dg-box"><rect x="0" y="62" width="150" height="48" rx="8"/><rect x="0" y="152" width="150" height="48" rx="8"/></g>
+<g class="dg-t1"><text x="75" y="91" text-anchor="middle">fleet.yaml</text><text x="75" y="181" text-anchor="middle">Go options</text></g>
+<g class="dg-line"><path d="M150 86 H182 Q192 86 192 96 V114 Q192 124 202 124 H212"/><path d="M150 176 H182 Q192 176 192 166 V148 Q192 138 202 138 H212"/></g>
+<g class="dg-box"><rect x="214" y="100" width="130" height="62" rx="8"/><rect x="394" y="100" width="130" height="62" rx="8"/></g>
+<g class="dg-t1"><text x="279" y="128" text-anchor="middle">spec.Fleet</text><text x="459" y="128" text-anchor="middle">compile</text></g>
+<g class="dg-t2"><text x="279" y="147" text-anchor="middle">one model</text><text x="459" y="147" text-anchor="middle">validate → Plan</text></g>
+<g class="dg-line"><path d="M344 131 H392" marker-end="url(#ar)"/><path d="M524 131 H556 Q566 131 566 121 V84 Q566 74 576 74 H604" marker-end="url(#ar)"/><path d="M524 131 H556 Q566 131 566 141 V194 Q566 204 576 204 H604" marker-end="url(#ar)"/></g>
+<g class="dg-box dg-hot"><rect x="606" y="28" width="274" height="92" rx="10"/></g>
+<g class="dg-t1"><text x="626" y="56">packtrail engine</text></g>
+<g class="dg-t2"><text x="626" y="78">event log · timers · budgets</text><text x="626" y="98">flows, choices, fan-out, waits</text></g>
+<g class="dg-box"><rect x="606" y="162" width="274" height="130" rx="10"/></g>
+<g class="dg-t1"><text x="626" y="190">workers</text></g>
+<g class="dg-t2"><text x="626" y="212">agent-&lt;name&gt; · act-&lt;name&gt;</text><text x="626" y="230">remote-&lt;name&gt;</text></g>
+<g class="dg-inner"><rect x="626" y="244" width="234" height="30" rx="6"/></g>
+<g class="dg-t3"><text x="743" y="264" text-anchor="middle">fresh phero agent per job</text></g>
+<g class="dg-line"><path d="M743 120 V160" marker-start="url(#ar)" marker-end="url(#ar)"/></g>
+<g class="dg-t2"><text x="753" y="145">jobs ⇄ results</text></g>
+<g class="dg-bus"><rect x="0" y="308" width="880" height="34" rx="8"/></g>
+<g class="dg-t2 dg-busl"><text x="440" y="330" text-anchor="middle">NATS · JetStream — the only transport; stiggy never touches it directly</text></g>
+</svg>
+</figure>
+<ul>
+<li>A flow step that runs an agent is a packtrail task whose <code>meta</code> holds the step (prompt, writes, routes, ...). It is versioned with the flow, so a running execution keeps the configuration it started with.</li>
+<li>Each agent is a packtrail worker kind. Every job builds a fresh phero agent, runs it, and returns its output, channel writes and usage.</li>
+<li>Agent-chosen routing, <code>ask_human</code>, structured output and execution memory live in packtrail state, so they are durable and correct under fork, rerun and time travel.</li>
+<li>stiggy never touches NATS directly. See <a href="#architecture">Architecture rules</a>.</li>
+</ul></section>
+<section id="install"><h2>Install &amp; build</h2>
+<p>Requires Go 1.26.4 (the toolchain is fetched automatically) and a NATS server with JetStream enabled.</p>
+<pre><code>go install github.com/henomis/stiggy/cmd/stiggy@latest
+
+# from a checkout
+make build        # bin/stiggy (static, honors GOOS/GOARCH)
+make test         # all tests with -race
+make check        # test + examples + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.0.0 and <code>packtrail</code> v1.0.0.</p></section>
+<section id="quickstart"><h2>Quick start</h2>
+<pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
+<span class="c-key">namespace</span>: newsroom
+<span class="c-key">models</span>:
+  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: gemma4:cloud}
+<span class="c-key">agents</span>:
+  <span class="c-key">researcher</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Researcher, <span class="c-key">goal</span>: <span class="c-str">"Find accurate, recent facts."</span>}
+  <span class="c-key">writer</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Writer, <span class="c-key">goal</span>: <span class="c-str">"Write short, clear articles."</span>}
+<span class="c-key">crews</span>:
+  <span class="c-key">article</span>:
+    <span class="c-key">tasks</span>:
+      - {<span class="c-key">id</span>: research, <span class="c-key">agent</span>: researcher, <span class="c-key">description</span>: <span class="c-str">"Research {{.input.topic}}."</span>}
+      - {<span class="c-key">id</span>: write, <span class="c-key">agent</span>: writer, <span class="c-key">description</span>: Write a 200-word article from the research.}</code></pre><p>Check it, look at what it compiles to, serve it, and start an execution:</p><pre><code>stiggy validate fleet.yaml        # every problem, with its line
+stiggy compile fleet.yaml         # the packtrail flows it becomes
+stiggy run fleet.yaml &amp;           # serve it
+stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><p><code>start</code> prints the execution id; with <code>-wait</code> it then prints the final state. The same fleet in Go is shown under <a href="#go">Go library</a>.</p></section>
+<section id="structure"><h2>Fleet structure</h2>
+<p>A fleet is one YAML document, or the equivalent Go options. Decoding is strict: an unknown key is an error, reported with its line. <code>stiggy validate</code> reports every problem at once.</p>
+<pre><code><span class="c-key">version</span>: <span class="c-str">"1"</span>          <span class="c-com"># optional</span>
+<span class="c-key">namespace</span>: newsroom   <span class="c-com"># packtrail namespace; default "stiggy"</span>
+<span class="c-key">models</span>: {}
+<span class="c-key">embedders</span>: {}
+<span class="c-key">vectorstores</span>: {}
+<span class="c-key">knowledge</span>: {}
+<span class="c-key">tools</span>: {}
+<span class="c-key">agents</span>: {}
+<span class="c-key">remotes</span>: {}
+<span class="c-key">flows</span>: {}
+<span class="c-key">crews</span>: {}
+<span class="c-key">patterns</span>: {}
+<span class="c-key">expose</span>: {}
+<span class="c-key">schedules</span>: {}</code></pre>
+<p>Names (keys of every section, node ids) must match <code>[A-Za-z0-9_-]</code>. Agent, owner and exposed names are NATS subject tokens of at most 64 characters.</p>
+<h3 id="env">Environment variables in the file</h3>
+<p>String values outside <code>flows</code> may use <code>${VAR}</code>, <code>${VAR:-default}</code> and <code>$$</code> (a literal <code>$</code>). A missing variable without a default is an error. Quote a reference inside a <code>{...}</code> mapping (<code>api_key: "${OPENAI_API_KEY}"</code>), where YAML would otherwise read its braces. <code>stiggy validate -no-env</code> skips expansion.</p>
+<div class="note"><strong>Flows are never expanded.</strong> They are versioned definitions stored by packtrail, so they must not depend on the environment or hold secrets.</div></section>
+<section id="models"><h2>Models</h2>
+<pre><code><span class="c-key">models</span>:
+  <span class="c-key">fast</span>:
+    <span class="c-key">provider</span>: openai          <span class="c-com"># openai | anthropic | ollama (or a registered one)</span>
+    <span class="c-key">model</span>: gpt-4o-mini        <span class="c-com"># provider default when empty; required for ollama</span>
+    <span class="c-key">api_key</span>: ${OPENAI_API_KEY}
+    <span class="c-key">base_url</span>: https://...     <span class="c-com"># OpenAI-compatible endpoints</span>
+    <span class="c-key">temperature</span>: <span class="c-num">0.2</span>
+    <span class="c-key">max_tokens</span>: <span class="c-num">1024</span>
+    <span class="c-key">retries</span>: <span class="c-num">2</span>                <span class="c-com"># retry a failed call (exponential back-off)</span>
+    <span class="c-key">rate_limit</span>: {<span class="c-key">requests_per_minute</span>: <span class="c-num">60</span>, <span class="c-key">max_concurrent</span>: <span class="c-num">4</span>}   <span class="c-com"># per process</span></code></pre><p><code>ollama</code> uses Ollama's OpenAI-compatible endpoint (default <code>http://localhost:11434/v1</code>), for example <code>{provider: ollama, model: gemma4:cloud}</code>. In Go, <code>WithModel(name, llm)</code> registers a ready phero LLM and <code>WithModelSpec</code> the same struct as YAML.</p></section>
+<section id="tools"><h2>Tools</h2>
+<pre><code><span class="c-key">tools</span>:
+  <span class="c-key">shell</span>: {<span class="c-key">type</span>: bash, <span class="c-key">allowlist</span>: [ls, cat], <span class="c-key">timeout</span>: 30s, <span class="c-key">working_dir</span>: /work}
+  <span class="c-key">files</span>: {<span class="c-key">type</span>: file_read, <span class="c-key">working_dir</span>: /work}    <span class="c-com"># also file_write, file_edit, glob, grep</span>
+  <span class="c-key">skills</span>: {<span class="c-key">type</span>: skill, <span class="c-key">root</span>: ./skills}
+  <span class="c-key">scratch</span>: {<span class="c-key">type</span>: kv, <span class="c-key">bucket</span>: scratchpad}         <span class="c-com"># NATS KV read/write tools</span>
+  <span class="c-key">browser</span>: {<span class="c-key">type</span>: mcp, <span class="c-key">command</span>: npx, <span class="c-key">args</span>: [-y, <span class="c-str">"@playwright/mcp"</span>], <span class="c-key">allow</span>: [browser_navigate]}
+  <span class="c-key">remote</span>: {<span class="c-key">type</span>: mcp, <span class="c-key">url</span>: https://mcp.example.com/mcp, <span class="c-key">deny</span>: [delete_everything]}</code></pre><p>Built-in types: <code>bash</code>, <code>file_read</code>, <code>file_write</code>, <code>file_edit</code>, <code>glob</code>, <code>grep</code>, <code>skill</code>, <code>kv</code> and <code>mcp</code>. Options are checked strictly per type. An <code>mcp</code> entry is either a stdio <code>command</code> (with <code>args</code> and <code>env</code>; only a minimal environment is passed on) or a streamable-HTTP <code>url</code>, filtered with <code>allow</code> and <code>deny</code>.</p></section>
+<section id="agents"><h2>Agents</h2>
+<pre><code><span class="c-key">agents</span>:
+  <span class="c-key">writer</span>:
+    <span class="c-key">model</span>: fast
+    <span class="c-key">system</span>: You write for a newsroom.   <span class="c-com"># system prompt</span>
+    <span class="c-key">role</span>: Writer                        <span class="c-com"># appended to system</span>
+    <span class="c-key">goal</span>: Short, accurate articles.
+    <span class="c-key">backstory</span>: Ten years at a daily paper.
+    <span class="c-key">description</span>: Writes articles.       <span class="c-com"># for agents that delegate to it</span>
+    <span class="c-key">tools</span>: [shell, files]
+    <span class="c-key">knowledge</span>: [handbook]               <span class="c-com"># one search_&lt;name&gt; tool each</span>
+    <span class="c-key">delegates</span>: [researcher, legal]      <span class="c-com"># agents or remotes, as ask_&lt;name&gt; tools</span>
+    <span class="c-key">max_iterations</span>: <span class="c-num">10</span>                  <span class="c-com"># default 25</span>
+    <span class="c-key">stream</span>: <span class="c-num">true</span>                        <span class="c-com"># progress events while it runs</span>
+    <span class="c-key">memory</span>: execution                   <span class="c-com"># see below</span></code></pre>
+<p>Agents run in-process inside packtrail workers of kind <code>agent-&lt;name&gt;</code>. Each job builds a fresh phero agent.</p>
+<ul>
+<li><strong>Steering tools</strong> are added from the step: <code>route_to_&lt;node&gt;</code> for each route and <code>ask_human</code> (see <a href="#routing">Routing &amp; human in the loop</a>).</li>
+<li><strong>Delegates</strong> appear as <code>ask_&lt;name&gt;</code> tools; their usage is charged to the calling step.</li>
+<li><strong>Streaming</strong> (<code>stream: true</code>) publishes text and tool calls as progress, readable with <code>stiggy progress</code>.</li>
+</ul>
+<h3 id="memory">memory</h3>
+<div class="tablewrap"><table><thead><tr><th>Type</th><th>Kept in</th><th>Notes</th></tr></thead><tbody><tr><td><code>none</code> (default)</td><td>nowhere</td><td>Every step starts fresh</td></tr><tr><td><code>execution</code></td><td>the execution's state (hidden channel <code>_mem_&lt;agent&gt;</code>)</td><td>Correct under fork, rerun and time travel</td></tr><tr><td><code>simple</code></td><td>the worker process</td><td><code>max_items</code> (default 100)</td></tr><tr><td><code>jsonfile</code></td><td><code>&lt;dir&gt;/&lt;session&gt;.json</code></td><td><code>dir</code></td></tr><tr><td><code>nats</code></td><td>NATS KV</td><td><code>bucket</code></td></tr><tr><td><code>psql</code></td><td>PostgreSQL</td><td><code>dsn</code>, <code>table</code>, <code>ensure_schema</code></td></tr><tr><td><code>rag</code></td><td>a knowledge index</td><td><code>knowledge</code></td></tr></tbody></table></div>
+<p>Long-term types (all but <code>none</code> and <code>execution</code>) also take:</p>
+<ul>
+<li><code>session</code>: default the agent's name, shared by every execution;</li>
+<li><code>per_execution: true</code>: append the execution id to the session;</li>
+<li><code>summarize: {model, threshold, size}</code>.</li>
+</ul>
+<p><code>memory</code> may be a bare type (<code>memory: execution</code>) or a mapping (<code>memory: {type: nats, bucket: crew-memory, per_execution: true}</code>).</p></section>
+<section id="knowledge"><h2>Embedders, vector stores &amp; knowledge</h2>
+<pre><code><span class="c-key">embedders</span>:
+  <span class="c-key">small</span>: {<span class="c-key">provider</span>: openai, <span class="c-key">model</span>: text-embedding-3-small, <span class="c-key">api_key</span>: <span class="c-str">"${OPENAI_API_KEY}"</span>}  <span class="c-com"># or ollama</span>
+<span class="c-key">vectorstores</span>:
+  <span class="c-key">docs</span>: {<span class="c-key">type</span>: qdrant, <span class="c-key">host</span>: localhost, <span class="c-key">port</span>: <span class="c-num">6334</span>, <span class="c-key">collection</span>: handbook, <span class="c-key">vector_size</span>: <span class="c-num">1536</span>, <span class="c-key">distance</span>: cosine}
+  <span class="c-key">pg</span>: {<span class="c-key">type</span>: psql, <span class="c-key">dsn</span>: <span class="c-str">"${DATABASE_URL}"</span>, <span class="c-key">collection</span>: handbook, <span class="c-key">vector_size</span>: <span class="c-num">1536</span>}
+  <span class="c-key">wv</span>: {<span class="c-key">type</span>: weaviate, <span class="c-key">host</span>: localhost:<span class="c-num">8080</span>, <span class="c-key">class</span>: Handbook}
+<span class="c-key">knowledge</span>:
+  <span class="c-key">handbook</span>:
+    <span class="c-key">embedder</span>: small
+    <span class="c-key">vectorstore</span>: docs
+    <span class="c-key">description</span>: The editorial handbook.
+    <span class="c-key">top_k</span>: <span class="c-num">4</span>
+    <span class="c-key">sources</span>:
+      - {<span class="c-key">path</span>: docs/*.md, <span class="c-key">chunk_size</span>: <span class="c-num">1000</span>, <span class="c-key">chunk_overlap</span>: <span class="c-num">100</span>}   <span class="c-com"># splitter: markdown | recursive</span></code></pre><p>An agent lists <code>knowledge: [handbook]</code> and gets a <code>search_handbook</code> tool. The engine role ingests the sources at startup when the store is empty.</p></section>
+<section id="remotes"><h2>Remotes</h2>
+<p>Agents served by others on the NATS Agent Protocol, found by discovery:</p>
+<pre><code><span class="c-key">remotes</span>:
+  <span class="c-key">legal</span>: {<span class="c-key">owner</span>: legal-team, <span class="c-key">name</span>: reviewer, <span class="c-key">description</span>: Reviews legal risks.}</code></pre><p>Steps run them with <code>remote: legal</code> (worker kind <code>remote-legal</code>); agents list them in <code>delegates</code>. The protocol is final-answer only, so remote agents do not stream.</p></section>
+<section id="flows"><h2>Flows &amp; steps</h2>
+<p>A flow is a <a href="https://github.com/henomis/packtrail">packtrail flow</a>: <code>start</code>, <code>channels</code> (with reducers <code>replace</code>, <code>append</code>, <code>merge</code>, <code>sum</code>), <code>output</code> (an expression; default all channels, or the last node's result), <code>budget</code>, <code>max_steps</code>, <code>retention</code>, <code>triggers</code>, and <code>nodes</code> of types <code>task</code>, <code>choice</code> (<code>to: $end</code> ends the flow), <code>fanout</code>, <code>join</code>, <code>await</code>, <code>map</code> and <code>subflow</code>. Refer to packtrail's documentation for everything on those nodes.</p>
+<p>A <code>task</code> or <code>map</code> node runs a stiggy step when it sets one of these fields:</p>
+<div class="tablewrap"><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody><tr><td><code>agent</code></td><td>Run a fleet agent</td></tr><tr><td><code>activity</code></td><td>Run a Go activity (library mode)</td></tr><tr><td><code>remote</code></td><td>Prompt a remote agent</td></tr><tr><td><code>prompt</code></td><td>Go template over the job context; default: the input or map item, plus the context outputs</td></tr><tr><td><code>expected_output</code></td><td>Appended to the prompt</td></tr><tr><td><code>context</code></td><td>Nodes whose outputs the prompt includes; default the previous node</td></tr><tr><td><code>writes</code></td><td><code>{channel: output}</code> or <code>{channel: output.field}</code></td></tr><tr><td><code>routes</code></td><td>Nodes the agent may choose next, and <code>human</code> for <code>ask_human</code> (task nodes only, not in fan-outs or maps)</td></tr><tr><td><code>human_input</code></td><td>A human reviews the answer: <code>{"approve": true}</code> or feedback</td></tr></tbody></table></div>
+<p>A step runs exactly one of <code>agent</code>, <code>activity</code> and <code>remote</code>. The node's own <code>output_schema</code>, <code>retry</code>, <code>timeout</code>, <code>cache</code> and <code>concurrency</code> still apply. With <code>output_schema</code> the agent answers structured JSON.</p>
+<h3>A hand-written flow</h3>
+<pre><code><span class="c-key">flows</span>:
+  <span class="c-key">greet</span>:
+    <span class="c-key">nodes</span>:
+      - {<span class="c-key">id</span>: hello, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: greeter, <span class="c-key">prompt</span>: <span class="c-str">"Greet {{.input.name}}."</span>}</code></pre>
+<h3 id="prompts">Prompt templates</h3>
+<p>Templates see <code>.input</code>, <code>.channels</code>, <code>.results</code>, <code>.item</code>, <code>.index</code>, <code>.last_node</code>, <code>.visits</code>, <code>.signals</code>, <code>.errors</code>, <code>.counters</code> and <code>.resume</code>, plus the <code>json</code> function: <code>{{json .channels.notes}}</code>. Missing keys render as zero values.</p>
+<p>Without a <code>prompt</code>, the agent receives the <code>Item</code> (in a map) or the <code>Input</code>, followed by the output of each <code>context</code> node, or of the previous node when <code>context</code> is empty. A step with nothing to show gets <code>Begin.</code>.</p>
+<h3>Outputs</h3>
+<p>An agent step's output is <code>{"text": "&lt;answer&gt;"}</code>, or the parsed object when it has an <code>output_schema</code>. <code>writes</code> copies all of it (<code>output</code>) or a field (<code>output.verdict</code>) into a channel, applying the channel's reducer.</p>
+<h3 id="budgets">Usage counters and budgets</h3>
+<p>Budgets in <code>budget</code> (flow, crew or pattern) can use <code>agent_steps</code>, <code>tokens_in</code>, <code>tokens_out</code> and <code>cost_usd</code>. They are charged for every run, including failed and paused ones, and checked on completion, failure and pause. <code>max_steps</code> bounds the number of node visits.</p>
+<h3 id="example-flow">A larger example</h3>
+<pre><code><span class="c-key">agents</span>:
+  <span class="c-key">planner</span>: {<span class="c-key">model</span>: m, <span class="c-key">knowledge</span>: [handbook], <span class="c-key">delegates</span>: [critic, legal]}
+  <span class="c-key">researcher</span>: {<span class="c-key">model</span>: m, <span class="c-key">memory</span>: {<span class="c-key">type</span>: execution}}
+  <span class="c-key">critic</span>: {<span class="c-key">model</span>: m, <span class="c-key">stream</span>: <span class="c-num">true</span>}
+<span class="c-key">flows</span>:
+  <span class="c-key">crew</span>:
+    <span class="c-key">start</span>: plan
+    <span class="c-key">channels</span>:
+      <span class="c-key">notes</span>: {<span class="c-key">reducer</span>: append}
+      <span class="c-key">verdict</span>: {}
+    <span class="c-key">budget</span>: {<span class="c-key">tokens_out</span>: <span class="c-num">50000</span>, <span class="c-key">agent_steps</span>: <span class="c-num">40</span>}
+    <span class="c-key">max_steps</span>: <span class="c-num">200</span>
+    <span class="c-key">nodes</span>:
+      - <span class="c-key">id</span>: plan
+        <span class="c-key">type</span>: task
+        <span class="c-key">agent</span>: planner
+        <span class="c-key">output_schema</span>:
+          <span class="c-key">type</span>: object
+          <span class="c-key">properties</span>: {<span class="c-key">topics</span>: {<span class="c-key">type</span>: array, <span class="c-key">items</span>: {<span class="c-key">type</span>: string}}}
+          <span class="c-key">required</span>: [topics]
+        <span class="c-key">next</span>: research
+      - <span class="c-key">id</span>: research
+        <span class="c-key">type</span>: map
+        <span class="c-key">over</span>: results.plan.topics
+        <span class="c-key">max_parallel</span>: <span class="c-num">4</span>
+        <span class="c-key">agent</span>: researcher
+        <span class="c-key">prompt</span>: <span class="c-str">"Research {{.item}}. Context: {{json .channels.notes}}"</span>
+        <span class="c-key">writes</span>: {<span class="c-key">notes</span>: output}
+        <span class="c-key">next</span>: review
+      - <span class="c-key">id</span>: review
+        <span class="c-key">type</span>: task
+        <span class="c-key">agent</span>: critic
+        <span class="c-key">context</span>: [plan, research]
+        <span class="c-key">expected_output</span>: A verdict and the reason for it.
+        <span class="c-key">human_input</span>: <span class="c-num">true</span>
+        <span class="c-key">writes</span>: {<span class="c-key">verdict</span>: output.verdict}
+        <span class="c-key">routes</span>: [plan, human]</code></pre></section>
+<section id="routing"><h2>Routing &amp; human in the loop</h2>
+<h3>Agent-chosen routing</h3>
+<p><code>routes: [a, b]</code> gives the agent a <code>route_to_a</code> and a <code>route_to_b</code> tool and makes both nodes dynamic edges of the step. The choice is stored in packtrail state, so it is durable and replayable. Routes work on <code>task</code> nodes only, not inside fan-outs or maps. See <a href="#ex-router"><code>examples/router</code></a>.</p>
+<h3>Asking a human</h3>
+<p>Add <code>human</code> to <code>routes</code> to give the agent an <code>ask_human</code> tool, or set <code>human_input: true</code> to have a human review every answer. Either way the step pauses. Its interrupt payload is in the execution state, at <code>State.Tasks[...].Interrupt</code>:</p>
+<pre><code>{kind: "question" | "review", agent, node, question | answer}</code></pre><div class="tablewrap"><table><thead><tr><th>Kind</th><th>Resume with</th></tr></thead><tbody><tr><td><code>question</code></td><td><code>"text"</code> or <code>{"answer": "..."}</code></td></tr><tr><td><code>review</code></td><td><code>{"approve": true}</code>, or <code>"text"</code> / <code>{"feedback": "..."}</code> to have the agent revise its answer</td></tr></tbody></table></div><pre><code>stiggy resume -ns newsroom &lt;exec&gt; &lt;node&gt; -value '"answer"'
+stiggy resume -ns newsroom &lt;exec&gt; &lt;node&gt; -value '{"approve": true}'</code></pre><p>In Go, use <code>Client().Resume</code>. Exchanges with the human are kept in the payload (the event log), so forks and reruns see exactly their own history. <code>await</code> nodes with <code>stiggy signal</code> cover waits that are not agent questions. See <a href="#ex-hitl"><code>examples/hitl</code></a>.</p></section>
+<section id="crews"><h2>Crews</h2>
+<pre><code><span class="c-key">crews</span>:
+  <span class="c-key">launch</span>:
+    <span class="c-key">process</span>: sequential            <span class="c-com"># or hierarchical (needs manager)</span>
+    <span class="c-key">manager</span>: boss
+    <span class="c-key">max_steps</span>: <span class="c-num">40</span>
+    <span class="c-key">budget</span>: {<span class="c-key">tokens_out</span>: <span class="c-num">50000</span>}
+    <span class="c-key">tasks</span>:
+      - <span class="c-key">id</span>: research
+        <span class="c-key">agent</span>: researcher
+        <span class="c-key">description</span>: <span class="c-str">"Research {{.input.product}}."</span>
+        <span class="c-key">expected_output</span>: Three facts.
+        <span class="c-key">async</span>: <span class="c-num">true</span>                <span class="c-com"># runs in parallel with neighbouring async tasks</span>
+      - <span class="c-key">id</span>: draft
+        <span class="c-key">agent</span>: writer
+        <span class="c-key">description</span>: Write the post.
+        <span class="c-key">context</span>: [research]
+        <span class="c-key">output_schema</span>: {...}
+        <span class="c-key">human_input</span>: <span class="c-num">true</span>
+        <span class="c-key">guardrail</span>: {<span class="c-key">agent</span>: editor, <span class="c-key">max_retries</span>: <span class="c-num">2</span>}</code></pre>
+<ul>
+<li><strong>sequential</strong> (default): tasks run in order; consecutive <code>async</code> tasks run as a fan-out.</li>
+<li><strong>hierarchical</strong>: a <code>manager</code> agent assigns the tasks.</li>
+<li><strong>guardrail</strong>: a checker agent reviews the answer; on failure the task is redone with the feedback, up to <code>max_retries</code>.</li>
+</ul>
+<p>A crew runs as a flow named after it. <code>stiggy compile</code> shows it. See <a href="#ex-crew"><code>examples/crew</code></a>.</p></section>
+<section id="patterns"><h2>Patterns</h2>
+<pre><code><span class="c-key">patterns</span>:
+  <span class="c-key">team</span>: {<span class="c-key">type</span>: supervisor, <span class="c-key">supervisor</span>: boss, <span class="c-key">workers</span>: [researcher, writer]}
+  <span class="c-key">swarm</span>: {<span class="c-key">type</span>: swarm, <span class="c-key">agents</span>: [triage, billing, tech]}
+  <span class="c-key">polish</span>: {<span class="c-key">type</span>: evaluator_optimizer, <span class="c-key">generator</span>: writer, <span class="c-key">evaluator</span>: editor, <span class="c-key">max_rounds</span>: <span class="c-num">3</span>}
+  <span class="c-key">argue</span>: {<span class="c-key">type</span>: debate, <span class="c-key">debaters</span>: [optimist, skeptic], <span class="c-key">judge</span>: editor, <span class="c-key">rounds</span>: <span class="c-num">2</span>}
+  <span class="c-key">project</span>: {<span class="c-key">type</span>: plan_execute, <span class="c-key">planner</span>: boss, <span class="c-key">executor</span>: researcher, <span class="c-key">synthesizer</span>: writer, <span class="c-key">max_parallel</span>: <span class="c-num">4</span>}</code></pre><div class="tablewrap"><table><thead><tr><th>Type</th><th>Behavior</th></tr></thead><tbody><tr><td><code>supervisor</code></td><td>The supervisor routes to one worker at a time; every worker reports back until the supervisor answers without routing. Node ids are the agents' names.</td></tr><tr><td><code>swarm</code></td><td>Every agent may hand off to any other. The first starts; the flow ends with the first agent that answers without handing off.</td></tr><tr><td><code>evaluator_optimizer</code></td><td>The evaluator judges with structured output <code>{pass, feedback}</code>; the generator regenerates with the feedback until it passes or <code>max_rounds</code> generations ran.</td></tr><tr><td><code>debate</code></td><td>Debaters argue in parallel for <code>rounds</code> rounds, each seeing the transcript so far; then the judge decides.</td></tr><tr><td><code>plan_execute</code></td><td>The planner lists steps (structured output <code>{steps}</code>), the executor runs each (<code>max_parallel</code> at a time), and the optional synthesizer combines the results.</td></tr></tbody></table></div><p>All patterns take <code>prompt</code>, <code>max_steps</code> and <code>budget</code>. Each runs as a flow named after it; <code>stiggy compile</code> shows the graph, and validation errors are mapped back to the pattern.</p></section>
+<section id="expose"><h2>Expose</h2>
+<pre><code><span class="c-key">expose</span>:
+  <span class="c-key">owner</span>: newsroom          <span class="c-com"># default: the namespace</span>
+  <span class="c-key">agents</span>: [writer]         <span class="c-com"># each prompt runs a fresh agent</span>
+  <span class="c-key">flows</span>: [launch]          <span class="c-com"># each prompt starts an execution, answered with its output</span></code></pre><p>Exposed agents and flows are served on the NATS Agent Protocol (phero's <code>nats.Server</code>), so any protocol client can call them. Discover them with <code>stiggy agents</code>. Readiness waits until they are discoverable.</p>
+<p>Exposed flows take the prompt as input: a JSON object as is, otherwise <code>{"prompt": text}</code>. A <code>Stiggy-Execution-Id</code> request header makes retries join the same execution.</p></section>
+<section id="schedules"><h2>Schedules</h2>
+<pre><code><span class="c-key">schedules</span>:
+  <span class="c-key">morning</span>: {<span class="c-key">flow</span>: launch, <span class="c-key">cron</span>: <span class="c-str">"0 0 7 * * *"</span>, <span class="c-key">input</span>: {<span class="c-key">product</span>: stiggy}}</code></pre><p>The cron expression has a leading seconds field. Schedules are registered by the engine role.</p></section>
+<section id="deploy"><h2>Deployment &amp; roles</h2>
+<p>Every process of a deployment runs the same fleet file and picks its part:</p>
+<pre><code>stiggy run -role engine  -http :8080 fleet.yaml                # one or more engines
+stiggy run -role workers -http :8080 fleet.yaml                # scale out
+stiggy run -role workers -only researcher,writer fleet.yaml    # dedicated hosts</code></pre><div class="tablewrap"><table><thead><tr><th>Role</th><th>Runs</th></tr></thead><tbody><tr><td><code>all</code> (default)</td><td>Engine and every worker: one process, typical in development</td></tr><tr><td><code>engine</code></td><td>The packtrail engine: provisions the namespace, registers flows and schedules, ingests knowledge, drives executions</td></tr><tr><td><code>workers</code></td><td>The agent, activity and remote workers. Scale it out freely</td></tr></tbody></table></div>
+<p><code>-only</code> restricts a process to the named agents, activities and remotes. On shutdown, workers drain before the engine stops.</p>
+<p><a href="https://github.com/henomis/stiggy/tree/main/deploy"><code>deploy/</code></a> has a Dockerfile (build from the repo root) and a docker-compose setup with NATS, one engine, scalable workers and a CLI profile:</p>
+<pre><code>docker build -f deploy/Dockerfile -t stiggy .
+OPENAI_API_KEY=... docker compose -f deploy/docker-compose.yaml up --scale workers=3
+docker compose -f deploy/docker-compose.yaml run --rm cli \
+  start -ns newsroom article -input '{"prompt": "NATS"}' -wait</code></pre>
+<h3 id="health">Health endpoints</h3>
+<p><code>-http ADDR</code> serves <code>/healthz</code> (200 while the process runs) and <code>/readyz</code> (503 until the app is ready, then 200).</p>
+<h3>Worker kinds</h3>
+<p><code>agent-&lt;name&gt;</code>, <code>act-&lt;name&gt;</code> and <code>remote-&lt;name&gt;</code> belong to stiggy. A plain task node with any other <code>kind</code> is left to external packtrail workers, in any language.</p></section>
+<section id="cli"><h2>CLI reference</h2>
+<p>Flags may appear before, between or after positional arguments. Online commands take <code>-server URL</code> (default <code>$NATS_URL</code>, else <code>nats://127.0.0.1:4222</code>) and <code>-creds FILE</code>. Execution commands also take <code>-ns NAMESPACE</code> (default <code>stiggy</code>).</p>
+<h3>Offline</h3>
+<div class="tablewrap"><table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody><tr><td><code>validate [-activities a,b] [-no-env] &lt;fleet.yaml&gt;...</code></td><td>Check fleet files; every problem is reported with its line</td></tr><tr><td><code>compile [-activities a,b] [-no-env] [-format yaml|json] &lt;fleet.yaml&gt;</code></td><td>Print the packtrail flows and the workers the fleet compiles to</td></tr></tbody></table></div><p><code>-activities</code> names the Go activities a library program registers, so a fleet written for the library can be checked by the binary.</p><h3>Online</h3><div class="tablewrap"><table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody><tr><td><code>run [-role all|engine|workers] [-only a,b] [-http ADDR] &lt;fleet.yaml&gt;</code></td><td>Serve the fleet until interrupted</td></tr><tr><td><code>start [-ns NS] [-input JSON] [-id ID] [-wait] &lt;flow&gt;</code></td><td>Start an execution and print its id; <code>-id</code> makes the start idempotent; <code>-wait</code> prints the final state</td></tr><tr><td><code>agents [-owner OWNER] [-agent FRAMEWORK]</code></td><td>List NATS Agent Protocol agents on the bus: exposed stiggy agents and flows, phero agents, any v0.3 agent</td></tr></tbody></table></div><h3>Executions</h3><div class="tablewrap"><table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody><tr><td><code>get &lt;exec&gt; [-seq N]</code></td><td>State now, or right after event N (time travel)</td></tr><tr><td><code>history &lt;exec&gt;</code></td><td>The event log, as JSON lines</td></tr><tr><td><code>progress &lt;exec&gt;</code></td><td>Streamed agent progress, as JSON lines</td></tr><tr><td><code>signal &lt;exec&gt; &lt;name&gt; [-payload JSON]</code></td><td>Signal an <code>await</code> node</td></tr><tr><td><code>resume &lt;exec&gt; &lt;node&gt; [-value JSON]</code></td><td>Answer an agent waiting for a human</td></tr><tr><td><code>update &lt;exec&gt; -writes JSON</code></td><td>Write channels, applied with their reducers (edit state while paused)</td></tr><tr><td><code>cancel &lt;exec&gt; [-reason TEXT]</code></td><td>Cancel an execution</td></tr><tr><td><code>fork &lt;exec&gt; &lt;seq&gt;</code></td><td>Branch an execution from a point in its history</td></tr><tr><td><code>rerun &lt;exec&gt; &lt;node&gt;</code></td><td>Run again from a node</td></tr></tbody></table></div><p>Executions can also be inspected, signalled, resumed, forked and cancelled with packtrail's own CLI and <code>packtrail-ui</code> on the fleet's namespace.</p></section>
+<section id="go"><h2>Go library</h2>
+<p><code>github.com/henomis/stiggy</code> builds the same fleet from options. <code>New</code> validates and compiles without I/O; models and tools are built, and NATS used, only by <code>Run</code>.</p>
+<pre><code>nc, _ := nats.Connect(nats.DefaultURL)
+
+app, err := stiggy.New(nc,
+    stiggy.WithNamespace("newsroom"),
+    stiggy.WithModel("fast", openai.New("ollama",
+        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel("gemma4:cloud"))),
+    stiggy.WithAgent("researcher", spec.Agent{Model: "fast", Role: "Researcher"}),
+    stiggy.WithAgent("writer", spec.Agent{Model: "fast", Role: "Writer"}),
+    stiggy.WithCrew("article", spec.Crew{Tasks: []spec.Task{
+        {ID: "research", Agent: "researcher", Description: "Research {{.input.topic}}."},
+        {ID: "write", Agent: "writer", Description: "Write a 200-word article from the research."},
+    }}),
+)
+
+go app.Run(ctx)
+&lt;-app.Ready()
+
+id, _ := app.Client().Start(ctx, "article", map[string]any{"topic": "NATS"})
+st, _ := app.Client().Wait(ctx, id)</code></pre>
+<p><code>app.Client()</code> is a packtrail client: signal, resume, update, fork, rerun, watch and stream progress from it. A YAML fleet loads with <code>config</code> and passes to <code>WithFleet</code>.</p>
+<h3>Options</h3>
+<div class="tablewrap"><table><thead><tr><th>Option</th><th>Purpose</th></tr></thead><tbody><tr><td><code>WithFleet(*spec.Fleet)</code></td><td>Merge a whole fleet (for example one loaded from YAML)</td></tr><tr><td><code>WithNamespace</code></td><td>Packtrail namespace</td></tr><tr><td><code>WithModel</code> / <code>WithModelSpec</code></td><td>A phero LLM instance, or a spec resolved by the registry</td></tr><tr><td><code>WithTool</code> / <code>WithToolSpec</code></td><td>Ready <code>*llm.Tool</code> values, or a spec</td></tr><tr><td><code>WithAgent</code></td><td>An agent (<code>spec.Agent</code>)</td></tr><tr><td><code>WithEmbedder</code>, <code>WithVectorStore</code>, <code>WithKnowledge</code></td><td>RAG building blocks</td></tr><tr><td><code>WithCrew</code>, <code>WithPattern</code></td><td>Crews and patterns, expanded into flows</td></tr><tr><td><code>WithFlow(*flow.Flow)</code></td><td>A packtrail flow; build agent nodes with <code>AgentTask</code></td></tr><tr><td><code>WithActivity(name, handler)</code></td><td>A Go function run as a step (worker kind <code>act-&lt;name&gt;</code>)</td></tr><tr><td><code>WithRemote</code>, <code>WithExpose</code>, <code>WithSchedule</code></td><td>Remote agents, exposure and cron schedules</td></tr><tr><td><code>WithRegistry</code></td><td>Register custom LLM providers, tool types, memory backends, embedders, vector stores</td></tr><tr><td><code>WithRole</code>, <code>WithOnly</code></td><td><code>RoleAll</code>, <code>RoleEngine</code>, <code>RoleWorkers</code>; restrict the workers</td></tr><tr><td><code>WithLogger</code></td><td>A <code>*slog.Logger</code></td></tr><tr><td><code>WithEngineOptions</code>, <code>WithWorkerOptions</code></td><td>Pass packtrail options through</td></tr></tbody></table></div>
+<p>Defining a name twice is an error (<code>ErrOption</code>). <code>AgentTask(id, agent, step)</code> and <code>ActivityTask(id, activity, step)</code> build task nodes for flows written in Go. <code>App.Plan()</code> returns the compiled plan.</p>
+<h3>Testing</h3>
+<p><code>stiggytest.Start(t, opts...)</code> boots an embedded NATS server, runs the app and returns a harness with the client. Fake models (<code>Reply</code>, <code>Replies</code>, <code>Echo</code>) script agent answers deterministically, so end-to-end tests need no API key.</p></section>
+<section id="examples"><h2>Examples</h2>
+<p>Each example runs against <code>$NATS_URL</code>, with a real model when <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code> or <code>OLLAMA_MODEL</code> is set, and a scripted one otherwise.</p>
+<div class="tablewrap"><table><thead><tr><th>Example</th><th>Shows</th></tr></thead><tbody>
+<tr><td id="ex-hello"><code>examples/hello</code></td><td>The smallest YAML fleet</td></tr>
+<tr><td id="ex-router"><code>examples/router</code></td><td>Agent-chosen routing, built with the Go API</td></tr>
+<tr><td id="ex-mapreduce"><code>examples/mapreduce</code></td><td>Structured output, a parallel map, an append channel</td></tr>
+<tr><td id="ex-hitl"><code>examples/hitl</code></td><td><code>ask_human</code> and human review, resumed with <code>Client.Resume</code></td></tr>
+<tr><td id="ex-crew"><code>examples/crew</code></td><td>A crew with a guardrail, also served as a protocol agent</td></tr>
+<tr><td id="ex-remote"><code>examples/remote</code></td><td>Another team's phero agent as a step and as a delegate</td></tr>
+</tbody></table></div>
+<pre><code>go run ./examples/router
+OLLAMA_MODEL=gemma4:cloud go run ./examples/mapreduce
+make examples        # scripted models, embedded server
+make examples-live   # a real model, default OLLAMA_MODEL=gemma4:cloud</code></pre></section>
+<section id="architecture"><h2>Architecture rules</h2>
+<h3>No direct NATS access</h3>
+<p>NATS is the only transport, and stiggy's own state lives in NATS (through packtrail). Agent storage you configure may be any backend phero offers. stiggy reaches NATS only through the public Go APIs of phero and packtrail:</p>
+<ul>
+<li>it dials NATS only in <code>internal/natsconn</code> and passes the connection to phero and packtrail constructors;</li>
+<li>it never imports <code>nats.go/jetstream</code>, <code>nats.go/micro</code> or <code>nats-server</code>, never publishes or subscribes on a subject, and never reads or writes phero's or packtrail's subjects, buckets or wire formats.</li>
+</ul>
+<p><code>internal/archguard</code> enforces this with a type-based check over the whole module, tests included (<code>make guard</code>).</p>
+<h3>phero and packtrail are read-only</h3>
+<p>When a feature needs something they don't expose, stiggy leaves it out or makes the compiler reject it with a clear error.</p>
+<h3>Layout</h3>
+<div class="tablewrap"><table><thead><tr><th>Package</th><th>Role</th></tr></thead><tbody><tr><td><code>spec/</code></td><td>The fleet model and <code>ApplyStep</code></td></tr><tr><td><code>config/</code></td><td>YAML loader: strict decoding, <code>${ENV}</code>, error lines</td></tr><tr><td><code>compile/</code></td><td>Pure <code>Compile(fleet, catalog)</code> reporting every problem</td></tr><tr><td><code>registry/</code></td><td>Providers, tool types, memory backends, embedders, vector stores, activities</td></tr><tr><td><code>agentrun/</code></td><td>The worker handler that runs a phero agent per job</td></tr><tr><td><code>patterns/</code></td><td>Crews and patterns as macros that expand into flows</td></tr><tr><td><code>stiggytest/</code></td><td>Embedded NATS, the app and fake LLMs</td></tr><tr><td><code>cmd/stiggy/</code></td><td>The CLI</td></tr></tbody></table></div><p>Licensed under Apache 2.0.</p></section>
+</main>
+</div>
+<footer><div class="inner"><span class="brand">stiggy<span class="dot">.</span></span><span>Multi-agent architectures on NATS. Apache 2.0.</span>
+<span class="links"><a href="https://github.com/henomis/stiggy">stiggy</a><a href="https://github.com/henomis/phero">phero</a><a href="https://github.com/henomis/packtrail">packtrail</a></span></div></footer>
+</body>
+</html>

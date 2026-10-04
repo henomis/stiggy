@@ -1,0 +1,43 @@
+# A researcher feeds a writer; a Go activity publishes the article.
+version: "1"
+namespace: newsroom
+models:
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+tools:
+  shell: {type: bash, allowlist: [ls, cat]}
+agents:
+  researcher:
+    model: fast
+    role: Senior researcher
+    goal: Find accurate, recent facts
+    tools: [shell]
+    max_iterations: 8
+  writer:
+    model: fast
+    system: You write concise articles.
+    memory: none
+flows:
+  article:
+    nodes:
+      - id: research
+        type: task
+        agent: researcher
+        prompt: "Research {{.input.topic}}"
+        next: write
+        retry: {max_attempts: 3, backoff: exponential, delay: 2s}
+      - id: write
+        type: task
+        agent: writer
+        timeout: 5m
+        next: publish
+      - id: publish
+        type: task
+        activity: publish
+schedules:
+  morning:
+    flow: article
+    cron: "0 0 7 * * *"
+    input: {topic: nats}

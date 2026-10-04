@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stiggy — multi-agent architectures on NATS</title>
+<meta name="description" content="stiggy deploys multi-agent architectures on NATS: phero agents orchestrated by packtrail's durable, event-sourced workflows. Define a fleet in YAML or Go; get crews, supervisors, swarms and human-in-the-loop that survive crashes.">
+<style>
+  :root {
+    --bg:        #0e0f0d;
+    --bg-soft:   #16180f;
+    --panel:     #1a1c14;
+    --panel-2:   #20231a;
+    --border:    #2c2f22;
+    --ink:       #ecead9;
+    --ink-soft:  #b9b8a4;
+    --ink-faint: #8a8a76;
+    --amber:     #e8b84b;
+    --amber-dim: #c79a37;
+    --green:     #9bcf6a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  header.bar { border-bottom: 1px solid var(--border); background: rgba(14,15,13,0.85);
+    backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
+  .bar .wrap { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: -0.02em; color: var(--ink); }
+  .brand .dot { color: var(--amber); }
+  .bar nav { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+  .bar nav a { color: var(--ink-soft); }
+  .bar nav a:hover { color: var(--ink); text-decoration: none; }
+
+  .hero { padding: 84px 0 64px; border-bottom: 1px solid var(--border); position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 60% 50% at 70% -10%, rgba(232,184,75,0.10), transparent 70%); }
+  .hero .wrap { position: relative; }
+  .eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--amber-dim); margin: 0 0 18px; }
+  h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 20px; font-weight: 800; }
+  h1 .accent { color: var(--amber); }
+  .lede { font-size: clamp(17px, 2.4vw, 20px); color: var(--ink-soft); max-width: 640px; margin: 0 0 32px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 14px; font-weight: 600;
+    padding: 11px 18px; border-radius: 8px; border: 1px solid var(--border);
+    transition: transform .08s ease, border-color .15s ease, background .15s ease; }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: var(--amber); color: #1a1500; border-color: var(--amber); }
+  .btn.primary:hover { background: #f2c65c; }
+  .btn.ghost { color: var(--ink); background: var(--panel); }
+  .btn.ghost:hover { border-color: var(--amber-dim); }
+
+  section { padding: 64px 0; border-bottom: 1px solid var(--border); }
+  h2 { font-size: clamp(24px, 4vw, 30px); letter-spacing: -0.02em; margin: 0 0 10px; font-weight: 750; }
+  h2 .num { font-family: var(--mono); color: var(--amber-dim); font-size: 0.65em; margin-right: 12px; font-weight: 600; }
+  h3 { margin: 36px 0 14px; font-size: 17px; }
+  .sub { color: var(--ink-soft); max-width: 680px; margin: 0 0 28px; }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; transition: border-color .15s ease; }
+  .card:hover { border-color: var(--amber-dim); }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+
+  pre { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 20px; overflow-x: auto;
+    margin: 0; font-family: var(--mono); font-size: 13.5px; line-height: 1.65; color: var(--ink); }
+  code { font-family: var(--mono); font-size: 0.92em; }
+  p code, li code, td code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: var(--amber); }
+  .c-key { color: var(--amber); }
+  .c-str { color: var(--green); }
+  .c-com { color: var(--ink-faint); font-style: italic; }
+  .c-cmd { color: var(--amber); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .lbl { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin: 0 0 8px; letter-spacing: 0.04em; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); background: var(--panel); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { white-space: nowrap; }
+
+  footer { padding: 48px 0 64px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; color: var(--ink-faint); font-size: 14px; }
+  footer .links { display: flex; gap: 22px; margin-left: auto; }
+  footer a { color: var(--ink-soft); }
+
+  @media (max-width: 680px) {
+    .grid, .two { grid-template-columns: 1fr; }
+    .bar nav a:not(.keep) { display: none; }
+    section { padding: 48px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="index.html">stiggy<span class="dot">.</span></a>
+    <nav>
+      <a href="#why">Why</a>
+      <a href="#fleet">Fleet</a>
+      <a href="#patterns">Patterns</a>
+      <a href="#run">Run</a>
+      <a class="keep" href="docs.html">Docs</a>
+      <a class="keep" href="https://github.com/henomis/stiggy">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">NATS · durable · multi-agent</p>
+    <h1>Multi-agent systems<br>that <span class="accent">survive crashes</span>.</h1>
+    <p class="lede">
+      stiggy deploys multi-agent architectures on NATS. Describe a fleet once, in YAML or Go:
+      agents, crews, supervisors and swarms run as durable, event-sourced workflows on JetStream.
+      Crews, supervisors, swarms, human review and replay, on a substrate that scales out.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="docs.html#quickstart">Quick start →</a>
+      <a class="btn ghost" href="docs.html">Read the docs</a>
+      <a class="btn ghost" href="https://github.com/henomis/stiggy">GitHub</a>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <h2><span class="num">01</span>Two libraries, glued</h2>
+    <p class="sub">
+      stiggy adds no engine and no agent loop of its own. It compiles a fleet into
+      <a href="https://github.com/henomis/packtrail">packtrail</a> flows and runs each agent step with a
+      <a href="https://github.com/henomis/phero">phero</a> agent, inside a packtrail worker.
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3>Durable by construction</h3>
+        <p>Executions are event-sourced on JetStream. Retries, timers, budgets, <code>fork</code>, <code>rerun</code> and time travel come from packtrail, and work on agent steps.</p>
+      </div>
+      <div class="card">
+        <h3>Agents from phero</h3>
+        <p>Any phero LLM provider, tool, memory backend or vector store, plus MCP servers. A fresh agent runs per job, with usage reported on every outcome.</p>
+      </div>
+      <div class="card">
+        <h3>One model, two front ends</h3>
+        <p>The <code>stiggy</code> binary reads YAML; the Go library takes options. Both produce the same fleet, validated and compiled the same way.</p>
+      </div>
+      <div class="card">
+        <h3>NATS is the only transport</h3>
+        <p>stiggy opens one connection and hands it to phero and packtrail. A guard test fails the build if stiggy code touches NATS directly.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="fleet">
+  <div class="wrap">
+    <h2><span class="num">02</span>One file, one fleet</h2>
+    <p class="sub">
+      A fleet declares <code>models</code>, <code>tools</code>, <code>agents</code> and, to wire them,
+      <code>crews</code>, <code>patterns</code> or hand-written <code>flows</code>. Decoding is strict, and
+      <code>stiggy validate</code> reports every problem at once, with its line.
+    </p>
+
+<pre><span class="c-key">namespace</span>: newsroom
+<span class="c-key">models</span>:
+  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: gemma4:cloud}
+<span class="c-key">agents</span>:
+  <span class="c-key">researcher</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Researcher, <span class="c-key">goal</span>: <span class="c-str">"Find accurate, recent facts."</span>}
+  <span class="c-key">writer</span>:     {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Writer,     <span class="c-key">goal</span>: <span class="c-str">"Write short, clear articles."</span>}
+<span class="c-key">crews</span>:
+  <span class="c-key">article</span>:
+    <span class="c-key">tasks</span>:
+      - {<span class="c-key">id</span>: research, <span class="c-key">agent</span>: researcher, <span class="c-key">description</span>: <span class="c-str">"Research {{.input.topic}}."</span>}
+      - {<span class="c-key">id</span>: write, <span class="c-key">agent</span>: writer, <span class="c-key">description</span>: Write a 200-word article from the research.}</pre>
+
+    <h3>It compiles to a plain packtrail flow</h3>
+    <p class="sub">
+      Crews and patterns are macros. <code>stiggy compile</code> prints the flows and workers they become,
+      so nothing is hidden.
+    </p>
+<pre><span class="c-cmd">$ stiggy compile</span> fleet.yaml
+<span class="c-com"># worker agent-researcher runs agent researcher</span>
+<span class="c-com"># worker agent-writer runs agent writer</span>
+<span class="c-key">name</span>: article
+<span class="c-key">start</span>: research
+<span class="c-key">nodes</span>:
+    - <span class="c-key">id</span>: research
+      <span class="c-key">type</span>: task
+      <span class="c-key">kind</span>: agent-researcher
+      <span class="c-key">next</span>: write
+    - <span class="c-key">id</span>: write
+      <span class="c-key">type</span>: task
+      <span class="c-key">kind</span>: agent-writer</pre>
+  </div>
+</section>
+
+<section id="patterns">
+  <div class="wrap">
+    <h2><span class="num">03</span>Crews, patterns, and raw flows</h2>
+    <p class="sub">
+      Pick the level you need. Every one of them ends up as a flow, so retries, budgets, human
+      review and replay work the same everywhere.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Shape</th><th>Section</th><th>What you get</th></tr></thead>
+        <tbody>
+          <tr><td>Crew</td><td><code>crews:</code></td><td>Sequential or hierarchical tasks, <code>context</code>, <code>async</code>, guardrails, <code>human_input</code></td></tr>
+          <tr><td>Supervisor</td><td><code>patterns:</code></td><td>A boss agent routes work to workers until done</td></tr>
+          <tr><td>Swarm</td><td><code>patterns:</code></td><td>Agents hand off to one another</td></tr>
+          <tr><td>Evaluator-optimizer</td><td><code>patterns:</code></td><td>Generate, critique, revise, for up to <code>max_rounds</code></td></tr>
+          <tr><td>Debate</td><td><code>patterns:</code></td><td>Debaters argue for <code>rounds</code>; a judge decides</td></tr>
+          <tr><td>Plan-execute</td><td><code>patterns:</code></td><td>A planner splits the job, executors run in parallel, a synthesizer merges</td></tr>
+          <tr><td>Your own graph</td><td><code>flows:</code></td><td>Choices, fan-out/join, maps, subflows, waits, agent-chosen routes</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:20px">
+      Agents can pause for a human with <code>ask_human</code>, steer the flow with <code>route_to_&lt;node&gt;</code>
+      tools, return structured output, delegate to other agents (or to remote ones), and keep memory per
+      execution, which stays correct under fork and rerun.
+    </p>
+  </div>
+</section>
+
+<section id="run">
+  <div class="wrap">
+    <h2><span class="num">04</span>Run it, scale it, operate it</h2>
+    <p class="sub">
+      Every process of a deployment runs the same fleet file and picks its part with <code>-role</code>.
+      The same binary starts executions and operates them.
+    </p>
+<pre><span class="c-cmd">nats-server</span> -js &amp;
+<span class="c-cmd">stiggy validate</span> fleet.yaml
+<span class="c-cmd">stiggy run</span> fleet.yaml &amp;                                     <span class="c-com"># engine + workers in one process</span>
+<span class="c-cmd">stiggy start</span> -ns newsroom -input <span class="c-str">'{"topic": "NATS"}'</span> -wait article
+
+<span class="c-com"># in production: split the roles and scale the workers</span>
+<span class="c-cmd">stiggy run</span> -role engine  -http :8080 fleet.yaml
+<span class="c-cmd">stiggy run</span> -role workers -http :8080 fleet.yaml
+<span class="c-cmd">stiggy run</span> -role workers -only researcher,writer fleet.yaml
+
+<span class="c-com"># operate executions</span>
+<span class="c-cmd">stiggy get | history | progress | signal | resume | update | cancel | fork | rerun</span></pre>
+  </div>
+</section>
+
+<section id="library">
+  <div class="wrap">
+    <h2><span class="num">05</span>Or embed it in Go</h2>
+    <p class="sub">
+      <code>stiggy.New</code> validates and compiles without I/O. <code>Run</code> starts the engine and workers;
+      <code>Client()</code> is a packtrail client.
+    </p>
+<pre>nc, _ := nats.<span class="c-key">Connect</span>(nats.DefaultURL)
+
+app, _ := stiggy.<span class="c-key">New</span>(nc,
+    stiggy.<span class="c-key">WithNamespace</span>(<span class="c-str">"newsroom"</span>),
+    stiggy.<span class="c-key">WithModel</span>(<span class="c-str">"fast"</span>, openai.<span class="c-key">New</span>(<span class="c-str">"ollama"</span>,
+        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel(<span class="c-str">"gemma4:cloud"</span>))),
+    stiggy.<span class="c-key">WithAgent</span>(<span class="c-str">"researcher"</span>, spec.Agent{Model: <span class="c-str">"fast"</span>, Role: <span class="c-str">"Researcher"</span>}),
+    stiggy.<span class="c-key">WithAgent</span>(<span class="c-str">"writer"</span>, spec.Agent{Model: <span class="c-str">"fast"</span>, Role: <span class="c-str">"Writer"</span>}),
+    stiggy.<span class="c-key">WithCrew</span>(<span class="c-str">"article"</span>, spec.Crew{Tasks: []spec.Task{
+        {ID: <span class="c-str">"research"</span>, Agent: <span class="c-str">"researcher"</span>, Description: <span class="c-str">"Research {{.input.topic}}."</span>},
+        {ID: <span class="c-str">"write"</span>, Agent: <span class="c-str">"writer"</span>, Description: <span class="c-str">"Write a 200-word article."</span>},
+    }}),
+)
+
+<span class="c-key">go</span> app.Run(ctx)
+&lt;-app.Ready()
+
+id, _ := app.Client().<span class="c-key">Start</span>(ctx, <span class="c-str">"article"</span>, map[string]any{<span class="c-str">"topic"</span>: <span class="c-str">"NATS"</span>})
+st, _ := app.Client().<span class="c-key">Wait</span>(ctx, id)</pre>
+  </div>
+</section>
+
+<section id="build">
+  <div class="wrap">
+    <h2><span class="num">06</span>Try it</h2>
+    <p class="sub">
+      Six runnable examples ship in <code>examples/</code>, and they double as tests: scripted models by default,
+      a real one with <code>make examples-live</code>. Requires Go 1.26.4 and a NATS server with JetStream.
+    </p>
+<pre><span class="c-cmd">go install</span> github.com/henomis/stiggy/cmd/stiggy@latest
+<span class="c-cmd">go run</span> ./examples/router
+<span class="c-cmd">make check</span>   <span class="c-com"># race tests + examples + lint + vet</span></pre>
+    <p class="sub" style="margin-top:20px"><a href="docs.html#examples">See the examples →</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="brand">stiggy<span class="dot">.</span></span>
+    <span>Multi-agent architectures on NATS. Apache 2.0.</span>
+    <span class="links">
+      <a href="https://github.com/henomis/stiggy">stiggy</a>
+      <a href="https://github.com/henomis/phero">phero</a>
+      <a href="https://github.com/henomis/packtrail">packtrail</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

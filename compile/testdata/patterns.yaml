@@ -1,0 +1,31 @@
+# Every crew process and pattern type, expanded into packtrail flows.
+models:
+  m: {provider: openai}
+agents:
+  researcher: {model: m, role: Researcher}
+  writer: {model: m, role: Writer}
+  editor: {model: m, role: Editor}
+  boss: {model: m, role: Manager, memory: execution}
+crews:
+  launch:
+    tasks:
+      - {id: research_market, agent: researcher, description: "Research the market for {{.input.product}}", async: true}
+      - {id: research_users, agent: researcher, description: "Research the users of {{.input.product}}", async: true}
+      - id: draft
+        agent: writer
+        description: Write the launch post.
+        expected_output: A 300-word post.
+        context: [research_market, research_users]
+        guardrail: {agent: editor, max_retries: 1}
+  managed:
+    process: hierarchical
+    manager: boss
+    tasks:
+      - {id: research, agent: researcher, description: Research the topic.}
+      - {id: write, agent: writer, description: Write the article.}
+patterns:
+  team: {type: supervisor, supervisor: boss, workers: [researcher, writer]}
+  swarm: {type: swarm, agents: [researcher, writer, editor]}
+  polish: {type: evaluator_optimizer, generator: writer, evaluator: editor, max_rounds: 2}
+  argue: {type: debate, debaters: [researcher, writer], judge: editor, rounds: 2}
+  project: {type: plan_execute, planner: boss, executor: researcher, synthesizer: writer, max_parallel: 3}

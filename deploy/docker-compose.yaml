@@ -1,0 +1,44 @@
+# A stiggy deployment: NATS with JetStream, one engine, scalable workers.
+#
+#   docker build -f deploy/Dockerfile -t stiggy .   (from the repo root)
+#   OPENAI_API_KEY=... docker compose -f deploy/docker-compose.yaml up --scale workers=3
+#
+# Then start an execution, or call the exposed crew from any NATS Agent
+# Protocol client:
+#   docker compose -f deploy/docker-compose.yaml run --rm cli \
+#     start -ns newsroom article -input '{"prompt": "NATS"}' -wait
+services:
+  nats:
+    image: nats:2.12
+    command: ["-js", "-sd", "/data"]
+    volumes: [nats-data:/data]
+    ports: ["4222:4222"]
+
+  engine:
+    image: stiggy
+    command: ["run", "-role", "engine", "-http", ":8080", "/etc/stiggy/fleet.yaml"]
+    environment:
+      NATS_URL: nats://nats:4222
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes: [./fleet.yaml:/etc/stiggy/fleet.yaml:ro]
+    depends_on: [nats]
+
+  workers:
+    image: stiggy
+    command: ["run", "-role", "workers", "-http", ":8080", "/etc/stiggy/fleet.yaml"]
+    environment:
+      NATS_URL: nats://nats:4222
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes: [./fleet.yaml:/etc/stiggy/fleet.yaml:ro]
+    depends_on: [nats]
+
+  cli:
+    image: stiggy
+    profiles: [tools]
+    environment:
+      NATS_URL: nats://nats:4222
+    entrypoint: ["/stiggy"]
+    depends_on: [nats]
+
+volumes:
+  nats-data:

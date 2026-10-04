@@ -1,0 +1,525 @@
+{
+  "namespace": "stiggy",
+  "flows": [
+    {
+      "name": "argue",
+      "start": "round",
+      "channels": {
+        "transcript": {
+          "reducer": "append"
+        }
+      },
+      "output": "results[\"judge\"]",
+      "nodes": [
+        {
+          "id": "round",
+          "type": "fanout",
+          "next": "gather",
+          "branches": [
+            "researcher",
+            "writer"
+          ]
+        },
+        {
+          "id": "researcher",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "You are debating this topic:\n{{json .input}}\n\nTranscript so far:\n{{json .channels.transcript}}\n\nGive your argument for this round. Start with \"researcher:\".",
+              "writes": {
+                "transcript": "output.text"
+              }
+            }
+          },
+          "kind": "agent-researcher"
+        },
+        {
+          "id": "writer",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "prompt": "You are debating this topic:\n{{json .input}}\n\nTranscript so far:\n{{json .channels.transcript}}\n\nGive your argument for this round. Start with \"writer:\".",
+              "writes": {
+                "transcript": "output.text"
+              }
+            }
+          },
+          "kind": "agent-writer"
+        },
+        {
+          "id": "gather",
+          "type": "join",
+          "next": "next_round"
+        },
+        {
+          "id": "next_round",
+          "type": "choice",
+          "rules": [
+            {
+              "when": "visits[\"round\"] \u003c 2",
+              "to": "round"
+            },
+            {
+              "default": true,
+              "to": "judge"
+            }
+          ]
+        },
+        {
+          "id": "judge",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "editor",
+              "prompt": "Judge this debate on:\n{{json .input}}\n\nTranscript:\n{{json .channels.transcript}}\n\nDecide which position is strongest and explain why."
+            }
+          },
+          "kind": "agent-editor"
+        }
+      ]
+    },
+    {
+      "name": "launch",
+      "start": "research_market_parallel",
+      "output": "results[\"draft\"]",
+      "nodes": [
+        {
+          "id": "research_market",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Research the market for {{.input.product}}"
+            }
+          },
+          "kind": "agent-researcher"
+        },
+        {
+          "id": "research_users",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Research the users of {{.input.product}}"
+            }
+          },
+          "kind": "agent-researcher"
+        },
+        {
+          "id": "research_market_parallel",
+          "type": "fanout",
+          "next": "research_market_join",
+          "branches": [
+            "research_market",
+            "research_users"
+          ]
+        },
+        {
+          "id": "research_market_join",
+          "type": "join",
+          "next": "draft"
+        },
+        {
+          "id": "draft",
+          "type": "task",
+          "next": "draft_guard",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "context": [
+                "research_market",
+                "research_users",
+                "draft_guard"
+              ],
+              "expected_output": "A 300-word post.",
+              "prompt": "Write the launch post."
+            }
+          },
+          "kind": "agent-writer"
+        },
+        {
+          "id": "draft_guard",
+          "type": "task",
+          "next": "draft_check",
+          "meta": {
+            "stiggy": {
+              "agent": "editor",
+              "context": [
+                "draft"
+              ],
+              "prompt": "Check the output below for this task. Set valid to true when it fulfils the task; otherwise explain what is wrong in feedback.\n\nTask: Write the launch post.\nExpected output: A 300-word post."
+            }
+          },
+          "kind": "agent-editor",
+          "output_schema": {
+            "properties": {
+              "feedback": {
+                "type": "string"
+              },
+              "valid": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "valid",
+              "feedback"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "id": "draft_check",
+          "type": "choice",
+          "rules": [
+            {
+              "when": "results[\"draft_guard\"].valid == true",
+              "to": "$end"
+            },
+            {
+              "when": "visits[\"draft\"] \u003c= 1",
+              "to": "draft"
+            },
+            {
+              "default": true,
+              "to": "$end"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "managed",
+      "start": "manager",
+      "channels": {
+        "_mem_boss": {
+          "reducer": "append"
+        }
+      },
+      "output": "results[\"manager\"]",
+      "nodes": [
+        {
+          "id": "manager",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "boss",
+              "prompt": "You manage a crew working on:\n{{json .input}}\n\nTasks:\n- research (agent researcher): Research the topic.\n  Result: {{with index .results \"research\"}}{{json .}}{{else}}(not done yet){{end}}\n- write (agent writer): Write the article.\n  Result: {{with index .results \"write\"}}{{json .}}{{else}}(not done yet){{end}}\n\nAssign the next task by routing to it, with instructions in your answer. When every task is done, write the crew's final answer without routing.",
+              "routes": [
+                "research",
+                "write"
+              ]
+            }
+          },
+          "kind": "agent-boss",
+          "dynamic": [
+            "research",
+            "write"
+          ]
+        },
+        {
+          "id": "research",
+          "type": "task",
+          "next": "manager",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "context": [
+                "manager"
+              ],
+              "prompt": "Research the topic."
+            }
+          },
+          "kind": "agent-researcher"
+        },
+        {
+          "id": "write",
+          "type": "task",
+          "next": "manager",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "context": [
+                "manager"
+              ],
+              "prompt": "Write the article."
+            }
+          },
+          "kind": "agent-writer"
+        }
+      ],
+      "max_steps": 12
+    },
+    {
+      "name": "polish",
+      "start": "generate",
+      "output": "results[\"generate\"]",
+      "nodes": [
+        {
+          "id": "generate",
+          "type": "task",
+          "next": "evaluate",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "context": [
+                "evaluate"
+              ]
+            }
+          },
+          "kind": "agent-writer"
+        },
+        {
+          "id": "evaluate",
+          "type": "task",
+          "next": "check",
+          "meta": {
+            "stiggy": {
+              "agent": "editor",
+              "context": [
+                "generate"
+              ],
+              "prompt": "Evaluate the output below against the task. Set pass to true when it is good enough; otherwise explain what to improve in feedback.\n\nTask:\n{{json .input}}"
+            }
+          },
+          "kind": "agent-editor",
+          "output_schema": {
+            "properties": {
+              "feedback": {
+                "type": "string"
+              },
+              "pass": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "pass",
+              "feedback"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "id": "check",
+          "type": "choice",
+          "rules": [
+            {
+              "when": "results[\"evaluate\"].pass == true",
+              "to": "$end"
+            },
+            {
+              "when": "visits[\"generate\"] \u003c 2",
+              "to": "generate"
+            },
+            {
+              "default": true,
+              "to": "$end"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "project",
+      "start": "plan",
+      "channels": {
+        "_mem_boss": {
+          "reducer": "append"
+        },
+        "results": {
+          "reducer": "append"
+        }
+      },
+      "output": "results[\"synthesize\"]",
+      "nodes": [
+        {
+          "id": "plan",
+          "type": "task",
+          "next": "execute",
+          "meta": {
+            "stiggy": {
+              "agent": "boss",
+              "prompt": "Plan this task:\n{{json .input}}\n\nBreak it into independent steps another agent can carry out."
+            }
+          },
+          "kind": "agent-boss",
+          "output_schema": {
+            "properties": {
+              "steps": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "steps"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "id": "execute",
+          "type": "map",
+          "next": "synthesize",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Carry out this step:\n{{.item}}\n\nIt is part of this task:\n{{json .input}}",
+              "writes": {
+                "results": "output.text"
+              }
+            }
+          },
+          "kind": "agent-researcher",
+          "over": "results[\"plan\"].steps",
+          "max_parallel": 3
+        },
+        {
+          "id": "synthesize",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "prompt": "Combine these step results into the final answer to the task.\n\nTask:\n{{json .input}}\n\nStep results:\n{{json .channels.results}}"
+            }
+          },
+          "kind": "agent-writer"
+        }
+      ]
+    },
+    {
+      "name": "swarm",
+      "start": "researcher",
+      "nodes": [
+        {
+          "id": "researcher",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "routes": [
+                "writer",
+                "editor"
+              ]
+            }
+          },
+          "kind": "agent-researcher",
+          "dynamic": [
+            "writer",
+            "editor"
+          ]
+        },
+        {
+          "id": "writer",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "writer",
+              "routes": [
+                "researcher",
+                "editor"
+              ]
+            }
+          },
+          "kind": "agent-writer",
+          "dynamic": [
+            "researcher",
+            "editor"
+          ]
+        },
+        {
+          "id": "editor",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "editor",
+              "routes": [
+                "researcher",
+                "writer"
+              ]
+            }
+          },
+          "kind": "agent-editor",
+          "dynamic": [
+            "researcher",
+            "writer"
+          ]
+        }
+      ],
+      "max_steps": 12
+    },
+    {
+      "name": "team",
+      "start": "boss",
+      "channels": {
+        "_mem_boss": {
+          "reducer": "append"
+        }
+      },
+      "output": "results[last_node]",
+      "nodes": [
+        {
+          "id": "boss",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "boss",
+              "routes": [
+                "researcher",
+                "writer"
+              ]
+            }
+          },
+          "kind": "agent-boss",
+          "dynamic": [
+            "researcher",
+            "writer"
+          ]
+        },
+        {
+          "id": "researcher",
+          "type": "task",
+          "next": "boss",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher"
+            }
+          },
+          "kind": "agent-researcher"
+        },
+        {
+          "id": "writer",
+          "type": "task",
+          "next": "boss",
+          "meta": {
+            "stiggy": {
+              "agent": "writer"
+            }
+          },
+          "kind": "agent-writer"
+        }
+      ],
+      "max_steps": 12
+    }
+  ],
+  "workers": [
+    {
+      "kind": "agent-boss",
+      "agent": "boss"
+    },
+    {
+      "kind": "agent-editor",
+      "agent": "editor"
+    },
+    {
+      "kind": "agent-researcher",
+      "agent": "researcher"
+    },
+    {
+      "kind": "agent-writer",
+      "agent": "writer"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+# Most control-flow shapes in one fleet.
+models:
+  m: {provider: anthropic}
+embedders:
+  small: {provider: openai, model: text-embedding-3-small}
+vectorstores:
+  docs: {type: qdrant, host: localhost, collection: handbook, vector_size: 1536}
+knowledge:
+  handbook:
+    embedder: small
+    vectorstore: docs
+    description: The editorial handbook.
+    sources: [{path: docs/*.md, chunk_size: 800, chunk_overlap: 80}]
+remotes:
+  legal: {owner: law, name: reviewer, description: Checks legal risks.}
+expose:
+  owner: newsroom
+  agents: [critic]
+  flows: [crew]
+agents:
+  planner: {model: m, knowledge: [handbook], delegates: [critic, legal]}
+  researcher: {model: m, memory: {type: execution}}
+  critic:
+    model: m
+    stream: true
+    memory: {type: nats, bucket: crew-memory, per_execution: true, summarize: {model: m, threshold: 40, size: 10}}
+flows:
+  crew:
+    start: plan
+    channels:
+      notes: {reducer: append}
+      verdict: {}
+    budget: {tokens_out: 50000, agent_steps: 40}
+    max_steps: 200
+    nodes:
+      - id: plan
+        type: task
+        agent: planner
+        output_schema:
+          type: object
+          properties: {topics: {type: array, items: {type: string}}}
+          required: [topics]
+        next: research
+      - id: research
+        type: map
+        over: results.plan.topics
+        max_parallel: 4
+        agent: researcher
+        prompt: "Research {{.item}}. Context: {{json .channels.notes}}"
+        writes: {notes: output}
+        next: review
+      - id: review
+        type: task
+        agent: critic
+        context: [plan, research]
+        expected_output: A verdict and the reason for it.
+        human_input: true
+        writes: {verdict: output.verdict}
+        routes: [plan, publish, human]
+        next: publish
+      - id: publish
+        type: fanout
+        branches: [archive, announce]
+        next: done
+      - id: archive
+        type: subflow
+        flow: archive
+      - id: announce
+        type: task
+        kind: external-announcer
+        meta: {channel: "#news"}
+      - id: done
+        type: join
+        policy: any
+        next: approve
+      - id: approve
+        type: await
+        signal: approval
+        timeout: 48h
+        on_timeout: rejected
+        next: final
+      - id: final
+        type: choice
+        rules:
+          - {when: 'signals.approval.ok == true', to: ok}
+          - {default: true, to: rejected}
+      - id: ok
+        type: task
+        agent: critic
+        prompt: "Summarise the approved notes."
+      - id: rejected
+        type: task
+        agent: critic
+        prompt: "Explain why it was rejected."
+  archive:
+    nodes:
+      - {id: legal, type: task, remote: legal, prompt: "Check {{json .input}}", next: store}
+      - {id: store, type: task, agent: researcher, prompt: "Archive {{json .input}}"}

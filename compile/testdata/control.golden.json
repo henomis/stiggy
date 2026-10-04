@@ -1,0 +1,221 @@
+{
+  "namespace": "stiggy",
+  "flows": [
+    {
+      "name": "archive",
+      "channels": {
+        "_mem_researcher": {
+          "reducer": "append"
+        }
+      },
+      "output": "results[last_node]",
+      "nodes": [
+        {
+          "id": "legal",
+          "type": "task",
+          "next": "store",
+          "meta": {
+            "stiggy": {
+              "prompt": "Check {{json .input}}",
+              "remote": "legal"
+            }
+          },
+          "kind": "remote-legal"
+        },
+        {
+          "id": "store",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Archive {{json .input}}"
+            }
+          },
+          "kind": "agent-researcher"
+        }
+      ]
+    },
+    {
+      "name": "crew",
+      "start": "plan",
+      "channels": {
+        "_mem_researcher": {
+          "reducer": "append"
+        },
+        "notes": {
+          "reducer": "append"
+        },
+        "verdict": {}
+      },
+      "output": "{\"notes\": channels[\"notes\"], \"verdict\": channels[\"verdict\"]}",
+      "nodes": [
+        {
+          "id": "plan",
+          "type": "task",
+          "next": "research",
+          "meta": {
+            "stiggy": {
+              "agent": "planner"
+            }
+          },
+          "kind": "agent-planner",
+          "output_schema": {
+            "properties": {
+              "topics": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "topics"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "id": "research",
+          "type": "map",
+          "next": "review",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Research {{.item}}. Context: {{json .channels.notes}}",
+              "writes": {
+                "notes": "output"
+              }
+            }
+          },
+          "kind": "agent-researcher",
+          "over": "results.plan.topics",
+          "max_parallel": 4
+        },
+        {
+          "id": "review",
+          "type": "task",
+          "next": "publish",
+          "meta": {
+            "stiggy": {
+              "agent": "critic",
+              "context": [
+                "plan",
+                "research"
+              ],
+              "expected_output": "A verdict and the reason for it.",
+              "human_input": true,
+              "routes": [
+                "plan",
+                "publish",
+                "human"
+              ],
+              "writes": {
+                "verdict": "output.verdict"
+              }
+            }
+          },
+          "kind": "agent-critic",
+          "dynamic": [
+            "plan",
+            "publish"
+          ]
+        },
+        {
+          "id": "publish",
+          "type": "fanout",
+          "next": "done",
+          "branches": [
+            "archive",
+            "announce"
+          ]
+        },
+        {
+          "id": "archive",
+          "type": "subflow",
+          "flow": "archive"
+        },
+        {
+          "id": "announce",
+          "type": "task",
+          "meta": {
+            "channel": "#news"
+          },
+          "kind": "external-announcer"
+        },
+        {
+          "id": "done",
+          "type": "join",
+          "next": "approve",
+          "policy": "any"
+        },
+        {
+          "id": "approve",
+          "type": "await",
+          "next": "final",
+          "timeout": "48h0m0s",
+          "signal": "approval",
+          "on_timeout": "rejected"
+        },
+        {
+          "id": "final",
+          "type": "choice",
+          "rules": [
+            {
+              "when": "signals.approval.ok == true",
+              "to": "ok"
+            },
+            {
+              "default": true,
+              "to": "rejected"
+            }
+          ]
+        },
+        {
+          "id": "ok",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "critic",
+              "prompt": "Summarise the approved notes."
+            }
+          },
+          "kind": "agent-critic"
+        },
+        {
+          "id": "rejected",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "agent": "critic",
+              "prompt": "Explain why it was rejected."
+            }
+          },
+          "kind": "agent-critic"
+        }
+      ],
+      "budget": {
+        "agent_steps": 40,
+        "tokens_out": 50000
+      },
+      "max_steps": 200
+    }
+  ],
+  "workers": [
+    {
+      "kind": "agent-critic",
+      "agent": "critic"
+    },
+    {
+      "kind": "agent-planner",
+      "agent": "planner"
+    },
+    {
+      "kind": "agent-researcher",
+      "agent": "researcher"
+    },
+    {
+      "kind": "remote-legal",
+      "remote": "legal"
+    }
+  ]
+}

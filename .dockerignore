@@ -1,0 +1,19 @@
+# Build artifacts
+bin/
+/stiggy
+coverage.*
+*.out
+*.test
+
+# VCS / CI / editor
+.git/
+.github/
+.golangci.yml
+.playwright-mcp/
+
+# Local env / docs not needed in the image
+.env
+docs/
+web/
+CLAUDE.md
+README.md

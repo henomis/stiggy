@@ -1,0 +1,73 @@
+{
+  "namespace": "newsroom",
+  "flows": [
+    {
+      "name": "article",
+      "nodes": [
+        {
+          "id": "research",
+          "type": "task",
+          "next": "write",
+          "meta": {
+            "stiggy": {
+              "agent": "researcher",
+              "prompt": "Research {{.input.topic}}"
+            }
+          },
+          "kind": "agent-researcher",
+          "retry": {
+            "max_attempts": 3,
+            "backoff": "exponential",
+            "delay": "2s"
+          }
+        },
+        {
+          "id": "write",
+          "type": "task",
+          "next": "publish",
+          "meta": {
+            "stiggy": {
+              "agent": "writer"
+            }
+          },
+          "kind": "agent-writer",
+          "timeout": "5m0s"
+        },
+        {
+          "id": "publish",
+          "type": "task",
+          "meta": {
+            "stiggy": {
+              "activity": "publish"
+            }
+          },
+          "kind": "act-publish"
+        }
+      ]
+    }
+  ],
+  "workers": [
+    {
+      "kind": "act-publish",
+      "activity": "publish"
+    },
+    {
+      "kind": "agent-researcher",
+      "agent": "researcher"
+    },
+    {
+      "kind": "agent-writer",
+      "agent": "writer"
+    }
+  ],
+  "schedules": [
+    {
+      "flow": "article",
+      "cron": "0 0 7 * * *",
+      "input": {
+        "topic": "nats"
+      },
+      "name": "morning"
+    }
+  ]
+}

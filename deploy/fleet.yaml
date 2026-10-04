@@ -1,0 +1,22 @@
+# Example fleet for docker-compose: a research crew exposed as an agent.
+namespace: newsroom
+models:
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+agents:
+  researcher: {model: fast, role: Researcher, goal: "Find accurate, recent facts."}
+  writer: {model: fast, role: Writer, goal: "Write clear, short articles."}
+  editor: {model: fast, role: Editor, goal: Keep articles accurate and concise.}
+crews:
+  article:
+    tasks:
+      - {id: research, agent: researcher, description: "Research {{.input.prompt}}."}
+      - id: write
+        agent: writer
+        description: Write a 200-word article from the research.
+        guardrail: {agent: editor, max_retries: 1}
+    budget: {tokens_out: 20000}
+expose:
+  flows: [article]
