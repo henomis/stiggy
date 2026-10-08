@@ -19,7 +19,8 @@
 //
 // One persona agent plays every member of the cast. Per map item it gets:
 //   - its identity, from a templated system prompt (role: "{{.item.name}}");
-//   - its own memory, from a templated session ("persona-{{.index}}");
+//   - its own memory, from a templated session ("persona-{{.index}}"), in
+//     NATS KV so it follows the member from worker to worker;
 //   - its own voice on the network: the world's post tool reads the caller
 //     from stiggy.JobFromContext, so a model cannot post as someone else.
 //
@@ -70,7 +71,8 @@ agents:
     tools: [world]
     max_iterations: 6
     # One memory per cast member and execution: each remembers its own posts.
-    memory: {type: simple, session: "persona-{{.index}}", per_execution: true}
+    # It lives in NATS KV, so a member's next round may run on any worker.
+    memory: {type: nats, bucket: socialsim-personas, session: "persona-{{.index}}", per_execution: true}
   analyst:
     model: main
     role: Analyst

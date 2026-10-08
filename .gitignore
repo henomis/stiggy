@@ -29,3 +29,7 @@ go.work.sum
 
 # Docs
 docs/
+
+# Local trackers
+REVIEW-BACKLOG.md
+UPSTREAM-REQUIREMENTS.md

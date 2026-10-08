@@ -553,7 +553,7 @@ flows:
 
 // TestEmptyAnswerIsNotReplayed checks a retried empty answer does not come
 // back from memory: OpenAI-compatible providers reject an assistant message
-// without content (UPSTREAM-REQUIREMENTS.md P4).
+// without content (a phero v2.0.0 issue).
 func TestEmptyAnswerIsNotReplayed(t *testing.T) {
 	var calls atomic.Int32
 

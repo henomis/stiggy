@@ -101,7 +101,7 @@ func (m *chanMem) turn() []llm.Message {
 // replayable keeps empty answers out of an agent's memory: an assistant
 // message with no content and no tool calls. phero saves one when a model
 // answers empty (a run stiggy then retries), and OpenAI-compatible providers
-// reject it once replayed (UPSTREAM-REQUIREMENTS.md P4). It filters on Save
+// reject it once replayed (a phero v2.0.0 issue). It filters on Save
 // and on Retrieve, so sessions stored before still replay. Delete it once
 // phero no longer saves such messages.
 type replayable struct{ memory.Memory }
