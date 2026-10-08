@@ -34,6 +34,7 @@ import (
 	"github.com/henomis/phero/v2/llm"
 	"github.com/henomis/phero/v2/trace"
 
+	"github.com/henomis/stiggy/internal/jobctx"
 	"github.com/henomis/stiggy/internal/stepio"
 	"github.com/henomis/stiggy/spec"
 )
@@ -123,33 +124,27 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return h.finish(step, p.Output, p.Route, nil, memoryWrite(r.a.Name, p.Memory))
 	}
 
-	prompt, err := Prompt(job, step)
+	data, prompt, err := stepPrompt(job, step, schema)
 	if err != nil {
-		return nil, worker.Permanent(err)
+		return nil, err
 	}
 
-	if schema != nil {
-		instr, serr := schemaInstruction(schema)
-		if serr != nil {
-			return nil, serr
-		}
-
-		prompt += instr
-	}
-
-	runCtx, cancel := context.WithCancelCause(ctx)
+	runCtx, cancel := context.WithCancelCause(jobctx.With(ctx, jobctx.Job{
+		ExecID: job.ExecID, Flow: job.Flow, Node: job.Node, Agent: r.a.Name, Attempt: job.Attempt,
+		Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
+	}))
 	defer cancel(nil)
 
 	ctl := &control{cancel: cancel}
 
-	mem, cm, err := r.memoryFor(ctx, job)
+	mem, cm, err := r.memoryFor(ctx, job, data)
 	if err != nil {
 		return nil, err
 	}
 
 	meter := &usageMeter{}
 
-	ag, err := r.build(job.Node, step, schema, ctl, meter)
+	ag, err := r.build(job.Node, step, schema, data, ctl, meter)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -192,6 +187,31 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 	return result, worker.WithUsage(err, usage)
 }
 
+// stepPrompt returns the job context and the step's prompt, with the
+// output schema's instruction when the step has one.
+func stepPrompt(job *worker.Job, step spec.Step, schema map[string]any) (map[string]any, string, error) {
+	data, err := stepio.Data(job)
+	if err != nil {
+		return nil, "", err
+	}
+
+	prompt, err := Prompt(job, step)
+	if err != nil {
+		return nil, "", worker.Permanent(err)
+	}
+
+	if schema != nil {
+		instr, serr := schemaInstruction(schema)
+		if serr != nil {
+			return nil, "", serr
+		}
+
+		prompt += instr
+	}
+
+	return data, prompt, nil
+}
+
 // memoryWrite returns the channel write that appends a run's turn to
 // execution memory.
 func memoryWrite(agentName string, turn []llm.Message) map[string]any {
@@ -203,9 +223,14 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema map[string]any, ctl *control, meter *usageMeter,
+func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, meter *usageMeter,
 ) (*agent.Agent, error) {
-	ag, err := agent.New(r.a.LLM, r.a.Name, SystemPrompt(r.a.Name, r.a.Spec)+ctl.instructions(step))
+	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
+	if err != nil {
+		return nil, err
+	}
+
+	ag, err := agent.New(r.a.LLM, r.a.Name, system+ctl.instructions(step))
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
@@ -215,7 +240,7 @@ func (r *runner) build(node string, step spec.Step, schema map[string]any, ctl *
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	delegates, err := delegateTools(r.a.Delegates, meter)
+	delegates, err := delegateTools(r.a.Delegates, data, meter)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
@@ -255,25 +280,35 @@ func (r *runner) runAgent(ctx context.Context, job *worker.Job, ag *agent.Agent,
 }
 
 // SystemPrompt composes an agent's system prompt from its system text and
-// its role, goal and backstory.
-func SystemPrompt(name string, s spec.Agent) string {
+// its role, goal and backstory. Each is a template over data, the job
+// context (see spec.ParsePrompt); nil data is for agents that run outside
+// any job, whose fields the compiler keeps static.
+func SystemPrompt(name string, s spec.Agent, data map[string]any) (string, error) {
 	var parts []string
 
-	if s.System != "" {
-		parts = append(parts, s.System)
-	}
-
-	for _, kv := range [][2]string{{"Role", s.Role}, {"Goal", s.Goal}, {"Backstory", s.Backstory}} {
-		if kv[1] != "" {
-			parts = append(parts, kv[0]+": "+kv[1])
+	for _, f := range [][3]string{
+		{"system", "", s.System},
+		{"role", "Role: ", s.Role},
+		{"goal", "Goal: ", s.Goal},
+		{"backstory", "Backstory: ", s.Backstory},
+	} {
+		if f[2] == "" {
+			continue
 		}
+
+		text, err := render(f[0], f[2], data)
+		if err != nil {
+			return "", fmt.Errorf("agent %q: %w", name, err)
+		}
+
+		parts = append(parts, f[1]+text)
 	}
 
 	if len(parts) == 0 {
-		return "You are " + name + ", a helpful agent."
+		return "You are " + name + ", a helpful agent.", nil
 	}
 
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), nil
 }
 
 // classify marks the errors no retry can fix as permanent. Everything else,

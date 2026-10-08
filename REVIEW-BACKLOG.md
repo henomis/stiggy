@@ -32,8 +32,9 @@
       without tools sends them with no `tools` defined, which Anthropic rejects (400 → permanent). Plausible, provider-dependent.
 - [ ] 2026-10-07 `patterns/teams.go:135`, `patterns/crew.go:189` — on an evaluator-optimizer or guardrail retry the generator sees the
       feedback but not its own rejected draft (context is `[evaluate]` / prev + guard); with `memory: none` it rewrites from scratch.
-- [ ] 2026-10-07 `patterns/crew.go:201`, `patterns/teams.go:307` — `expected_output` is pasted into the guard and hierarchical manager
+- [x] 2026-10-07 `patterns/crew.go:201`, `patterns/teams.go:307` — `expected_output` is pasted into the guard and hierarchical manager
       prompts, which are templates: `expected_output: "like {{name}}"` compiles on a plain task, fails once a guardrail is added.
+      Fixed 2026-10-08: `expected_output` is a template everywhere, checked by compile on every step.
 - [ ] 2026-10-07 `compile/flows.go:66` — packtrail validation is skipped for a flow that already has a stiggy error, so `agent: nope`
       plus a broken `when:` reports only the agent. Partial miss of "compile reports every problem", outside the accepted crews/patterns case.
 - [ ] 2026-10-07 `config/config.go:107`, `config/env.go` — with `-no-env`/`WithoutEnv` the `${` check on crews/patterns does not run

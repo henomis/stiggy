@@ -60,12 +60,18 @@ func (m *usageMeter) total() map[string]float64 {
 
 // delegateTools builds one tool per delegate: a fresh phero agent (with its
 // own tools and delegates, but no memory) exposed with agent.AsTool. Calls
-// are not durable: if the step fails, they run again with it.
-func delegateTools(delegates []Agent, meter *usageMeter) ([]*llm.Tool, error) {
+// are not durable: if the step fails, they run again with it. A delegate's
+// system prompt renders over the delegating job's context, data.
+func delegateTools(delegates []Agent, data map[string]any, meter *usageMeter) ([]*llm.Tool, error) {
 	tools := make([]*llm.Tool, 0, len(delegates))
 
 	for _, d := range delegates {
-		ag, err := agent.New(d.LLM, d.Name, SystemPrompt(d.Name, d.Spec))
+		system, err := SystemPrompt(d.Name, d.Spec, data)
+		if err != nil {
+			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
+		}
+
+		ag, err := agent.New(d.LLM, d.Name, system)
 		if err != nil {
 			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
 		}
@@ -76,7 +82,7 @@ func delegateTools(delegates []Agent, meter *usageMeter) ([]*llm.Tool, error) {
 			ag.SetMaxIterations(d.Spec.MaxIterations)
 		}
 
-		sub, err := delegateTools(d.Delegates, meter)
+		sub, err := delegateTools(d.Delegates, data, meter)
 		if err != nil {
 			return nil, err
 		}
@@ -89,7 +95,7 @@ func delegateTools(delegates []Agent, meter *usageMeter) ([]*llm.Tool, error) {
 
 		desc := d.Spec.Description
 		if desc == "" {
-			desc = SystemPrompt(d.Name, d.Spec)
+			desc = system
 		}
 
 		t, err := ag.AsTool(delegateToolPrefix+agent.SanitizeToolName(d.Name),

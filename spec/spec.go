@@ -126,7 +126,10 @@ type Agent struct {
 	// Model names an entry of [Fleet.Models].
 	Model string `yaml:"model" json:"model"`
 	// System is the system prompt. Role, Goal and Backstory, when set, are
-	// appended to it.
+	// appended to it. All four are templates over the job context, like a
+	// step prompt (see [ParsePrompt]), so "{{.item.name}}" gives each item of
+	// a map its own persona. Exposed agents and their delegates run outside
+	// any job, so theirs must be static.
 	System    string `yaml:"system,omitempty" json:"system,omitempty"`
 	Role      string `yaml:"role,omitempty" json:"role,omitempty"`
 	Goal      string `yaml:"goal,omitempty" json:"goal,omitempty"`
@@ -172,7 +175,9 @@ const (
 type Memory struct {
 	Type string `yaml:"type" json:"type"`
 	// Session is the memory session of a long-term memory; empty means the
-	// agent's name, so all executions share it.
+	// agent's name, so all executions share it. It is a template over the
+	// job context ("user-{{.input.user_id}}"), rendered per step; a missing
+	// key fails the step rather than sharing a session (see [ParseSession]).
 	Session string `yaml:"session,omitempty" json:"session,omitempty"`
 	// PerExecution scopes a long-term memory to one execution: the session
 	// gets the execution id appended.

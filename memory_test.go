@@ -17,6 +17,8 @@ package stiggy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,6 +183,43 @@ flows:
 
 	if got := lens.seen(); len(got) != 2 || got[1] != 1 {
 		t.Fatalf("assistant messages seen = %v, want the second execution to remember the first", got)
+	}
+}
+
+// TestTemplatedMemorySession checks a session template gives each user a
+// memory of their own, and a missing key fails the step instead of sharing
+// a session.
+func TestTemplatedMemorySession(t *testing.T) {
+	lens := &historyLens{}
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {clerk: {model: m, memory: {type: simple, session: "user-{{.input.user}}"}}}
+flows:
+  note:
+    nodes:
+      - {id: note, type: task, agent: clerk}
+`, map[string]llm.LLM{"m": lens.model(func(stiggytest.Request) string { return "noted" })})
+
+	for _, user := range []string{"ann", "ann", "bob"} {
+		if st := h.Run(t, "note", map[string]any{"user": user}); st.Status != packtrail.StatusCompleted {
+			t.Fatalf("status %s: %s", st.Status, st.Error)
+		}
+	}
+
+	if got := lens.seen(); len(got) != 3 || got[1] != 1 || got[2] != 0 {
+		t.Fatalf("assistant messages seen = %v, want [0 1 0]: ann remembers, bob starts fresh", got)
+	}
+
+	for _, input := range []map[string]any{{}, {"user": "a b"}} {
+		st := h.Run(t, "note", input)
+		if st.Status != packtrail.StatusFailed || !strings.Contains(st.Error, "session") {
+			t.Fatalf("input %v: status %s (%s), want a session failure", input, st.Status, st.Error)
+		}
+	}
+
+	if got := lens.seen(); len(got) != 3 {
+		t.Fatalf("model calls = %d, want none for a failed session", len(got))
 	}
 }
 
@@ -387,5 +426,127 @@ flows:
 
 	if !closed.Load() {
 		t.Fatal("the vector store's deferred cleanup did not run")
+	}
+}
+
+// TestTemplatedSystemPrompt checks system prompt fields render per job: a
+// map gives each item its own persona, and a delegate's system prompt
+// renders over the delegating job's context.
+func TestTemplatedSystemPrompt(t *testing.T) {
+	persona := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		return stiggytest.Response{Text: r.System}
+	})
+
+	host := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "ask_guide", Args: map[string]any{"input": "hi"}}}}
+		}
+
+		return stiggytest.Response{Text: r.ToolResults[0]}
+	})
+
+	h := startYAML(t, `
+models: {p: {provider: x}, h: {provider: x}}
+agents:
+  persona: {model: p, role: "{{.item.name}}", backstory: "You live in {{.input.city}}."}
+  host: {model: h, delegates: [guide]}
+  guide: {model: p, system: "Guide for {{.input.city}}."}
+flows:
+  town:
+    channels: {voices: {reducer: append}}
+    output: "{voices: channels.voices, host: results.host.text}"
+    nodes:
+      - {id: talk, type: map, over: input.people, agent: persona, writes: {voices: output.text}, next: host}
+      - {id: host, type: task, agent: host}
+`, map[string]llm.LLM{"p": persona, "h": host})
+
+	st := h.Run(t, "town", map[string]any{"city": "Rome", "people": []any{map[string]any{"name": "Ada"}, map[string]any{"name": "Bo"}}})
+	if st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	var out struct {
+		Voices []string
+		Host   string
+	}
+	if err := st.DecodeOutput(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	voices := strings.Join(out.Voices, " | ")
+	for _, w := range []string{"Role: Ada\n\nBackstory: You live in Rome.", "Role: Bo\n\nBackstory: You live in Rome."} {
+		if !strings.Contains(voices, w) {
+			t.Errorf("voices = %q, want %q", voices, w)
+		}
+	}
+
+	if !strings.Contains(out.Host, "Guide for Rome.") {
+		t.Errorf("host = %q, want the delegate's rendered system prompt", out.Host)
+	}
+}
+
+// TestJobFromContext checks a Go tool learns which step, map item and
+// agent call it, also through a delegate, so it never relies on the model
+// to say who it is.
+func TestJobFromContext(t *testing.T) {
+	whoami, err := llm.NewTool("whoami", "Tells who is asking.",
+		func(ctx context.Context, _ *struct{}) (string, error) {
+			job, ok := stiggy.JobFromContext(ctx)
+			if !ok {
+				return "", errors.New("no job")
+			}
+
+			var item struct{ Name string }
+			if err := job.DecodeItem(&item); err != nil {
+				return "", err
+			}
+
+			return fmt.Sprintf("%s/%s/%s/%d/%d/%s", job.Flow, job.Node, job.Agent, *job.Index, job.Attempt, item.Name), nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each model calls the one tool it has, then answers with its result.
+	callFirst := func(tool string) llm.LLM {
+		return stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+			if len(r.ToolResults) == 0 {
+				return stiggytest.Response{Calls: []stiggytest.Call{{Tool: tool, Args: map[string]any{"input": "who?"}}}}
+			}
+
+			return stiggytest.Response{Text: r.ToolResults[0]}
+		})
+	}
+
+	h := startYAML(t, `
+models: {direct: {provider: x}, boss: {provider: x}}
+agents:
+  persona: {model: direct, tools: [id]}
+  lead: {model: boss, delegates: [aide]}
+  aide: {model: direct, tools: [id]}
+flows:
+  town:
+    channels: {voices: {reducer: append}}
+    output: "{voices: channels.voices}"
+    nodes:
+      - {id: talk, type: map, over: input.people, agent: persona, writes: {voices: output.text}, next: relay}
+      - {id: relay, type: map, over: input.people, agent: lead, writes: {voices: output.text}}
+`, map[string]llm.LLM{"direct": callFirst("whoami"), "boss": callFirst("ask_aide")}, stiggy.WithTool("id", whoami))
+
+	st := h.Run(t, "town", map[string]any{"people": []any{map[string]any{"name": "Ada"}, map[string]any{"name": "Bo"}}})
+	if st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	var out struct{ Voices []string }
+	if err = st.DecodeOutput(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	voices := strings.Join(out.Voices, " | ")
+	for _, w := range []string{"town/talk/persona/0/1/Ada", "town/talk/persona/1/1/Bo", "town/relay/lead/0/1/Ada", "town/relay/lead/1/1/Bo"} {
+		if !strings.Contains(voices, w) {
+			t.Errorf("voices = %q, want %q", voices, w)
+		}
 	}
 }

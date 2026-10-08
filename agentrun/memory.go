@@ -136,23 +136,37 @@ func (c *sessionCache) get(ctx context.Context, session string) (memory.Memory, 
 	return m, nil
 }
 
-// SessionOf returns the memory session of an agent's job.
-func SessionOf(agentName string, m spec.Memory, execID string) string {
-	s := m.Session
-	if s == "" {
-		s = agentName
+// SessionOf returns the memory session of an agent's job: its session
+// template rendered over data (the job context), or the agent's name, with
+// the execution id appended for a per-execution memory.
+func SessionOf(agentName string, m spec.Memory, data map[string]any, execID string) (string, error) {
+	s := agentName
+
+	if m.Session != "" {
+		t, err := spec.ParseSession(m.Session)
+		if err != nil {
+			return "", err
+		}
+
+		if s, err = t.Render(data); err != nil {
+			return "", err
+		}
 	}
 
 	if m.PerExecution {
 		s += "-" + execID
 	}
 
-	return s
+	if err := spec.ValidSession(s); err != nil {
+		return "", err
+	}
+
+	return s, nil
 }
 
 // memoryFor returns the memory of one job: execution memory, a long-term
 // session, or none.
-func (r *runner) memoryFor(ctx context.Context, job *worker.Job) (memory.Memory, *chanMem, error) {
+func (r *runner) memoryFor(ctx context.Context, job *worker.Job, data map[string]any) (memory.Memory, *chanMem, error) {
 	m := r.a.Spec.Memory
 
 	switch {
@@ -161,7 +175,12 @@ func (r *runner) memoryFor(ctx context.Context, job *worker.Job) (memory.Memory,
 
 		return cm, cm, err
 	case m.IsLongTerm() && r.sessions != nil:
-		mem, err := r.sessions.get(ctx, SessionOf(r.a.Name, m, job.ExecID))
+		session, err := SessionOf(r.a.Name, m, data, job.ExecID)
+		if err != nil {
+			return nil, nil, worker.Permanent(fmt.Errorf("agentrun: memory: %w", err))
+		}
+
+		mem, err := r.sessions.get(ctx, session)
 		if err != nil {
 			return nil, nil, fmt.Errorf("agentrun: memory: %w", err)
 		}

@@ -40,17 +40,9 @@ func Prompt(job *worker.Job, s spec.Step) (string, error) {
 	prompt := defaultPrompt(data, s.Context)
 
 	if s.Prompt != "" {
-		t, perr := spec.ParsePrompt(job.Node, s.Prompt)
-		if perr != nil {
-			return "", perr
+		if prompt, err = render("prompt", s.Prompt, data); err != nil {
+			return "", err
 		}
-
-		var b strings.Builder
-		if err = t.Execute(&b, data); err != nil {
-			return "", fmt.Errorf("prompt: %w", err)
-		}
-
-		prompt = b.String()
 
 		// A template that asks for context nodes still gets them.
 		if len(s.Context) > 0 {
@@ -59,10 +51,31 @@ func Prompt(job *worker.Job, s spec.Step) (string, error) {
 	}
 
 	if s.ExpectedOutput != "" {
-		prompt += "\n\nExpected output:\n" + s.ExpectedOutput
+		expected, eerr := render("expected_output", s.ExpectedOutput, data)
+		if eerr != nil {
+			return "", eerr
+		}
+
+		prompt += "\n\nExpected output:\n" + expected
 	}
 
 	return prompt, nil
+}
+
+// render renders a prompt template (a prompt, an expected output, a system
+// prompt field) over data.
+func render(field, text string, data map[string]any) (string, error) {
+	t, err := spec.ParsePrompt(field, text)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	if err = t.Execute(&b, data); err != nil {
+		return "", fmt.Errorf("%s: %w", field, err)
+	}
+
+	return b.String(), nil
 }
 
 func defaultPrompt(data map[string]any, context []string) string {

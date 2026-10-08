@@ -47,12 +47,19 @@ func Exposed(a Agent) natsagent.Handler {
 
 // Run implements natsagent.Handler.
 func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
-	ag, err := agent.New(e.a.LLM, e.a.Name, SystemPrompt(e.a.Name, e.a.Spec))
+	// An exposed agent has no job context: the compiler keeps its system
+	// prompt and its delegates' static.
+	system, err := SystemPrompt(e.a.Name, e.a.Spec, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	ag, err := agent.New(e.a.LLM, e.a.Name, system)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	delegates, err := delegateTools(e.a.Delegates, &usageMeter{})
+	delegates, err := delegateTools(e.a.Delegates, nil, &usageMeter{})
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
@@ -71,7 +78,14 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		mem := e.a.Spec.Memory
 		mem.PerExecution = false
 
-		m, merr := e.sessions.get(ctx, SessionOf(e.a.Name, mem, ""))
+		// An exposed agent has no job context: the compiler only lets a
+		// static session through.
+		session, serr := SessionOf(e.a.Name, mem, nil, "")
+		if serr != nil {
+			return nil, fmt.Errorf("agent %q: memory: %w", e.a.Name, serr)
+		}
+
+		m, merr := e.sessions.get(ctx, session)
 		if merr != nil {
 			return nil, fmt.Errorf("agent %q: memory: %w", e.a.Name, merr)
 		}

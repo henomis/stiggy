@@ -77,13 +77,26 @@ func TestDefaultPrompt(t *testing.T) {
 }
 
 func TestSystemPrompt(t *testing.T) {
-	if got := SystemPrompt("x", spec.Agent{}); got != "You are x, a helpful agent." {
-		t.Errorf("default: %q", got)
+	if got, err := SystemPrompt("x", spec.Agent{}, nil); err != nil || got != "You are x, a helpful agent." {
+		t.Errorf("default: %q, %v", got, err)
 	}
 
-	got := SystemPrompt("x", spec.Agent{System: "Be brief.", Role: "Editor", Goal: "Clarity"})
-	if got != "Be brief.\n\nRole: Editor\n\nGoal: Clarity" {
-		t.Errorf("composed: %q", got)
+	got, err := SystemPrompt("x", spec.Agent{System: "Be brief.", Role: "Editor", Goal: "Clarity"}, nil)
+	if err != nil || got != "Be brief.\n\nRole: Editor\n\nGoal: Clarity" {
+		t.Errorf("composed: %q, %v", got, err)
+	}
+
+	data := map[string]any{"input": map[string]any{"lang": "Italian"}, "item": map[string]any{"name": "Ada", "bio": "a mathematician"}}
+
+	got, err = SystemPrompt("x", spec.Agent{
+		System: "Answer in {{.input.lang}}.", Role: "{{.item.name}}", Backstory: "You are {{.item.bio}}.",
+	}, data)
+	if err != nil || got != "Answer in Italian.\n\nRole: Ada\n\nBackstory: You are a mathematician." {
+		t.Errorf("templated: %q, %v", got, err)
+	}
+
+	if _, err = SystemPrompt("x", spec.Agent{Goal: "{{.input"}, data); err == nil {
+		t.Error("malformed template: no error")
 	}
 }
 
@@ -139,6 +152,12 @@ func TestPromptContextAndExpectedOutput(t *testing.T) {
 
 	if got, _ = Prompt(job(t, s, ctx), s); got != "Summarise.\n\nOutput of step \"a\":\nfrom a\n\nExpected output:\nOne line." {
 		t.Fatalf("template + context: %q", got)
+	}
+
+	s.ExpectedOutput = "One line in {{.results.b.text}}."
+
+	if got, _ = Prompt(job(t, s, ctx), s); !strings.HasSuffix(got, "Expected output:\nOne line in from b.") {
+		t.Fatalf("templated expected output: %q", got)
 	}
 }
 

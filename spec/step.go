@@ -79,7 +79,8 @@ type Step struct {
 	// Routes are the nodes the agent may choose to continue with, plus the
 	// reserved [RouteHuman]. They become the node's dynamic edges.
 	Routes []string `yaml:"routes,omitempty" json:"routes,omitempty"`
-	// ExpectedOutput describes the answer the step wants; it is appended to the prompt.
+	// ExpectedOutput describes the answer the step wants; it is appended to
+	// the prompt. It is a template like Prompt.
 	ExpectedOutput string `yaml:"expected_output,omitempty" json:"expected_output,omitempty"`
 	// Context lists the nodes whose results the default prompt includes
 	// (the task context). Empty means the previous node.

@@ -159,3 +159,49 @@ func TestMemoryYAML(t *testing.T) {
 		t.Fatalf("default = %q", a.Unset.TypeOrDefault())
 	}
 }
+
+func TestSessionTemplate(t *testing.T) {
+	data := map[string]any{"input": map[string]any{"user": "ann", "email": "a@b.c"}, "item": map[string]any{"id": 7}}
+
+	for _, tc := range []struct {
+		text, want string
+		static     bool
+	}{
+		{"shared", "shared", true},
+		{"team/eu.west", "team/eu.west", true},
+		{"user-{{.input.user}}", "user-ann", false},
+		{"persona-{{.item.id}}", "persona-7", false},
+	} {
+		s, err := spec.ParseSession(tc.text)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.text, err)
+		}
+
+		if s.Static() != tc.static {
+			t.Errorf("%q: static = %v", tc.text, s.Static())
+		}
+
+		if got, rerr := s.Render(data); rerr != nil || got != tc.want {
+			t.Errorf("%q: render = %q, %v; want %q", tc.text, got, rerr, tc.want)
+		}
+	}
+
+	for _, text := range []string{"", "a b", ".x", "x.", "a..b", "a.*", "a>", "{{.input"} {
+		if _, err := spec.ParseSession(text); err == nil {
+			t.Errorf("%q: parsed, want an error", text)
+		}
+	}
+
+	// A templated session fails closed: a missing key or an unsafe value is
+	// an error, never an empty or shared session.
+	for _, text := range []string{"user-{{.input.missing}}", "{{.input.email}}", "u-{{.nothing.here}}"} {
+		s, err := spec.ParseSession(text)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+
+		if got, rerr := s.Render(data); rerr == nil {
+			t.Errorf("%q: render = %q, want an error", text, got)
+		}
+	}
+}

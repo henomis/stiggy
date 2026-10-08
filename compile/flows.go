@@ -290,9 +290,9 @@ func (c *compiler) stepAgentOnly(path string, s spec.Step) {
 		name string
 		set  bool
 	}{
-		{"prompt", s.Prompt != ""},
+		{fieldPrompt, s.Prompt != ""},
 		{"routes", len(s.Routes) > 0},
-		{"expected_output", s.ExpectedOutput != ""},
+		{fieldExpectedOutput, s.ExpectedOutput != ""},
 		{"context", len(s.Context) > 0},
 		{"human_input", s.HumanInput},
 	} {
@@ -314,13 +314,21 @@ func (c *compiler) stepContext(path string, fc *flowCtx, s spec.Step) {
 	}
 }
 
-func (c *compiler) stepPrompt(path string, s spec.Step) {
-	if s.Prompt == "" {
-		return
-	}
+// Step fields that are prompt templates.
+const (
+	fieldPrompt         = "prompt"
+	fieldExpectedOutput = "expected_output"
+)
 
-	if _, err := spec.ParsePrompt(path, s.Prompt); err != nil {
-		c.errorf(path+".prompt", "%v", err)
+func (c *compiler) stepPrompt(path string, s spec.Step) {
+	for _, f := range [][2]string{{fieldPrompt, s.Prompt}, {fieldExpectedOutput, s.ExpectedOutput}} {
+		if f[1] == "" {
+			continue
+		}
+
+		if _, err := spec.ParsePrompt(f[0], f[1]); err != nil {
+			c.errorf(path+"."+f[0], "%v", err)
+		}
 	}
 }
 

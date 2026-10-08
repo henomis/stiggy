@@ -305,6 +305,52 @@ flows:
 			},
 		},
 		{
+			name: "memory sessions",
+			yaml: `
+models: {m: {provider: openai}}
+agents:
+  a: {model: m, memory: {type: simple, session: "user-{{.input.id"}}
+  b: {model: m, memory: {type: simple, session: "a b"}}
+  c: {model: m, memory: {type: simple, session: "user-{{.input.id}}"}}
+  d: {model: m, memory: {type: simple, session: "user-{{.item}}"}}
+flows:
+  f:
+    nodes:
+      - {id: s, type: task, agent: d}
+expose: {agents: [c]}
+`,
+			want: []string{
+				`4: agents.a.memory.session: session: template: session:1: unclosed action`,
+				`5: agents.b.memory.session: spec: a memory session must be`,
+				`6: agents.c.memory.session: an exposed agent has no job context`,
+			},
+		},
+		{
+			name: "system prompt templates",
+			yaml: `
+models: {m: {provider: openai}}
+agents:
+  a: {model: m, role: "{{.item.name", goal: "Help {{.input.user}}."}
+  front: {model: m, system: "Serve {{.input.user}}.", delegates: [helper]}
+  helper: {model: m, backstory: "{{.input.topic}}", delegates: [deep]}
+  deep: {model: m, goal: "{{.input.x}}"}
+  plain: {model: m, system: "Be brief.", delegates: [helper]}
+flows:
+  f:
+    nodes:
+      - {id: s, type: task, agent: a, expected_output: "{{.input.format", next: t}
+      - {id: t, type: task, agent: deep, expected_output: "A list of {{.input.n}} items."}
+expose: {agents: [front, plain]}
+`,
+			want: []string{
+				`4: agents.a.role: prompt: template: role:1: unclosed action`,
+				`5: agents.front.system: an exposed agent has no job context`,
+				`6: agents.helper.backstory: a delegate of exposed agent "front" has no job context`,
+				`7: agents.deep.goal: a delegate of exposed agent "front" has no job context`,
+				`12: flows.f.nodes.s.expected_output: prompt: template: expected_output:1: unclosed action`,
+			},
+		},
+		{
 			name: "remotes and expose",
 			yaml: `
 models: {m: {provider: openai}}

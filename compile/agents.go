@@ -54,9 +54,74 @@ func (c *compiler) agents() {
 		}
 
 		c.memory(path+".memory", a.Memory)
+		c.session(path+".memory.session", name, a.Memory)
+		c.systemPrompt(path, name, a)
 	}
 
 	c.delegationCycles()
+}
+
+// systemPrompt checks an agent's system prompt fields, which are templates
+// over the job context. An exposed agent answers prompts outside any
+// execution, and its delegates run with it: their fields must be static.
+func (c *compiler) systemPrompt(path, name string, a spec.Agent) {
+	exposedBy := c.exposedBy(name)
+
+	for _, f := range [][2]string{{"system", a.System}, {"role", a.Role}, {"goal", a.Goal}, {"backstory", a.Backstory}} {
+		if f[1] == "" {
+			continue
+		}
+
+		t, err := spec.ParsePrompt(f[0], f[1])
+		if err != nil {
+			c.errorf(path+"."+f[0], "%v", err)
+
+			continue
+		}
+
+		switch {
+		case spec.IsStatic(t) || exposedBy == "":
+		case exposedBy == name:
+			c.errorf(path+"."+f[0], "an exposed agent has no job context: its %s cannot be a template", f[0])
+		default:
+			c.errorf(path+"."+f[0], "a delegate of exposed agent %q has no job context: its %s cannot be a template",
+				exposedBy, f[0])
+		}
+	}
+}
+
+// exposedBy returns the exposed agent that runs agent, itself or through
+// delegation, or "" when none does.
+func (c *compiler) exposedBy(agent string) string {
+	if c.fleet.Expose == nil {
+		return ""
+	}
+
+	for _, root := range c.fleet.Expose.Agents {
+		seen := map[string]bool{}
+
+		var reaches func(string) bool
+
+		reaches = func(n string) bool {
+			if n == agent {
+				return true
+			}
+
+			if seen[n] {
+				return false
+			}
+
+			seen[n] = true
+
+			return slices.ContainsFunc(c.fleet.Agents[n].Delegates, reaches)
+		}
+
+		if reaches(root) {
+			return root
+		}
+	}
+
+	return ""
 }
 
 func (c *compiler) remotes() {
@@ -123,6 +188,26 @@ func (c *compiler) refs(path, what string, names []string, exists func(string) b
 
 	if dup := firstDuplicate(names); dup != "" {
 		c.errorf(path, "%s %q listed twice", what, dup)
+	}
+}
+
+// session checks a long-term memory's session template. An exposed agent
+// answers prompts outside any execution, so it has no job context to render
+// a template over.
+func (c *compiler) session(path, agent string, m spec.Memory) {
+	if !m.IsLongTerm() || m.Session == "" {
+		return
+	}
+
+	t, err := spec.ParseSession(m.Session)
+	if err != nil {
+		c.errorf(path, "%v", err)
+
+		return
+	}
+
+	if !t.Static() && c.fleet.Expose != nil && slices.Contains(c.fleet.Expose.Agents, agent) {
+		c.errorf(path, "an exposed agent has no job context: its session cannot be a template")
 	}
 }
 

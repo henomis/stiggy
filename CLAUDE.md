@@ -29,6 +29,7 @@ A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both 
 | `deploy/` | Dockerfile (build from the repo root), docker-compose, example fleet |
 | `stiggytest/` | Embedded NATS + app + fake LLMs (`Reply`, `Replies`, `Echo`) |
 | `internal/stepio/` | Step meta, job context as template data, `writes` extraction (shared by agents and activities) |
+| `internal/jobctx/`, `job.go` | The job a tool call runs for, in its context (`stiggy.JobFromContext`): execution, node, agent, attempt, input, map item |
 | `cmd/stiggy/` | CLI: `validate`, `compile`, `run` (roles, `-only`, `-http` health), `start`, `agents`, and execution ops (`get`, `history`, `progress`, `signal`, `resume`, `update`, `cancel`, `fork`, `rerun`) |
 | `internal/natsconn/` | The only place that dials NATS |
 | `internal/archguard/` | The no-direct-NATS guard |
