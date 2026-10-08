@@ -73,7 +73,9 @@ agents:
     backstory: "{{.item.bio}} Your view on the news: {{.item.stance}}"
     goal: Take part in a small social network, in character. Keep posts under 40 words.
     tools: [world]
-    max_iterations: 6
+    # Small models may call tools again after posting; post says the turn
+    # is over, and this leaves room for a second try.
+    max_iterations: 10
     # One memory per cast member and execution: each remembers its own posts.
     # It lives in NATS KV, so a member's next round may run on any worker.
     memory: {type: nats, bucket: socialsim-personas, session: "persona-{{.index}}", per_execution: true}
@@ -269,7 +271,7 @@ func worldTools() ([]*llm.Tool, error) {
 				return "", err
 			}
 
-			return "Posted.", nil
+			return "Posted. Your turn this round is over: do not call any more tools.", nil
 		})
 	if err != nil {
 		return nil, err
