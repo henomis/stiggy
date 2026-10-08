@@ -550,3 +550,125 @@ flows:
 		}
 	}
 }
+
+// TestEmptyAnswerIsNotReplayed checks a retried empty answer does not come
+// back from memory: OpenAI-compatible providers reject an assistant message
+// without content (UPSTREAM-REQUIREMENTS.md P4).
+func TestEmptyAnswerIsNotReplayed(t *testing.T) {
+	var calls atomic.Int32
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		for _, m := range r.Messages {
+			if m.Role == llm.RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.TextContent()) == "" {
+				return stiggytest.Response{Text: "replayed an empty answer"}
+			}
+		}
+
+		if calls.Add(1) == 1 {
+			return stiggytest.Response{Text: ""}
+		}
+
+		return stiggytest.Response{Text: "ok"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {clerk: {model: m, memory: {type: simple, per_execution: true}}}
+flows:
+  note:
+    nodes:
+      - {id: note, type: task, agent: clerk, retry: {max_attempts: 2, delay: 10ms}}
+`, map[string]llm.LLM{"m": model})
+
+	st := h.Run(t, "note", map[string]any{})
+	if st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	var out struct{ Text string }
+	if err := st.DecodeOutput(&out); err != nil || out.Text != "ok" {
+		t.Fatalf("output = %q, %v", out.Text, err)
+	}
+}
+
+// TestStepID checks a tool's step id is stable across a retry of the step
+// and changes on the next visit of the node: the idempotency key of a tool
+// with side effects.
+func TestStepID(t *testing.T) {
+	type seen struct {
+		step    string
+		attempt int
+	}
+
+	var (
+		mu    sync.Mutex
+		calls []seen
+		runs  atomic.Int32
+	)
+
+	record, err := llm.NewTool("record", "Records the call.", func(ctx context.Context, _ *struct{}) (string, error) {
+		job, ok := stiggy.JobFromContext(ctx)
+		if !ok {
+			return "", errors.New("no job")
+		}
+
+		mu.Lock()
+
+		calls = append(calls, seen{job.StepID, job.Attempt})
+
+		mu.Unlock()
+
+		return "recorded", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Every run calls the tool; the first one then answers empty, so its
+	// step is retried.
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "record", Args: map[string]any{}}}}
+		}
+
+		if runs.Add(1) == 1 {
+			return stiggytest.Response{Text: ""}
+		}
+
+		return stiggytest.Response{Text: "done"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {clerk: {model: m, tools: [rec]}}
+flows:
+  loop:
+    start: act
+    nodes:
+      - {id: act, type: task, agent: clerk, retry: {max_attempts: 2, delay: 10ms}, next: again}
+      - id: again
+        type: choice
+        rules:
+          - {when: 'visits["act"] < 2', to: act}
+          - {default: true, to: $end}
+`, map[string]llm.LLM{"m": model}, stiggy.WithTool("rec", record))
+
+	if st := h.Run(t, "loop", map[string]any{}); st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(calls) != 3 {
+		t.Fatalf("calls = %v, want 3 (a retried visit, then a second visit)", calls)
+	}
+
+	if calls[0].step != calls[1].step || calls[0].attempt != 1 || calls[1].attempt != 2 {
+		t.Errorf("retry: calls = %v, want one step id over attempts 1 and 2", calls)
+	}
+
+	if calls[2].step == calls[0].step || calls[2].attempt != 1 {
+		t.Errorf("revisit: calls = %v, want a new step id at attempt 1", calls)
+	}
+}

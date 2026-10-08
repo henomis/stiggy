@@ -35,6 +35,12 @@ type Job struct {
 	// Agent is the step's agent. A delegate's tools see the job of the
 	// step that delegates to it, with that step's agent.
 	Agent string
+	// StepID names this run of the step within the execution: retries and
+	// redeliveries keep it, while the next visit of the node (a loop, a new
+	// round) and a resume after an interrupt get a new one. Map items get
+	// one each. It is the idempotency key for a tool with side effects:
+	// delivery is at least once, and a retried step calls its tools again.
+	StepID string
 	// Attempt is the step's attempt, from 1.
 	Attempt int
 	// Index is the map item's index; nil outside a map node.

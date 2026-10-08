@@ -43,6 +43,22 @@ nats, psql and rag are safe with several instances. Reopen this only if stiggy o
 - **stiggy until then:** an execution is cancelled only when it is unnamed and its context ends. A named one
   (`Stiggy-Execution-Id`) is never cancelled.
 
+### P4. An empty assistant answer saved to memory breaks the next call (OpenAI-compatible providers)
+
+- **Today:** when a model ends a run with an empty answer, the agent saves an assistant message with no parts and no tool
+  calls (`finishRun`, see P2). On the next run that message is replayed; `llm/openai` maps it to a
+  `ChatCompletionMessage` with an empty `Content`, which go-openai omits, so the request carries an assistant message with
+  no content. Ollama answers `400 invalid message content type: <nil>`, on every retry, so the step fails.
+- **Needed:** don't save an assistant message with no content and no tool calls, or send it with `"content": ""`.
+- **Why stiggy hits it:** stiggy retries an empty answer (`ErrEmptyAnswer`). With a long-term memory, the failed run's
+  empty message is replayed on the retry and the step can never succeed. Seen live with `examples/socialsim` and
+  gemma4:cloud on 2026-10-08, before its prompt asked for a non-empty answer. Diagnosis from the error and phero's code;
+  the request body was not captured.
+- **Acceptance:** a run that ended with an empty answer leaves memory replayable: the next run's request is accepted.
+- **stiggy until then:** `agentrun.replayable` wraps every agent memory and drops such messages on save and on retrieve
+  (`TestEmptyAnswerIsNotReplayed`). Delete it once phero is fixed. Confirmed live: without it the retry hit the 400;
+  with it the retry runs (gemma4:cloud may still answer empty, which the prompt has to discourage).
+
 ## packtrail
 
 ### K1. (done in packtrail v1.0.1-rc.1) Start with an existing id: report it, and refuse another flow

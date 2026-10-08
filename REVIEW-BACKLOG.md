@@ -26,6 +26,13 @@
 - [ ] 2026-10-07 `agentrun/agentrun.go:217` — tool-name collisions (two `kv` or `file_read` tools, a delegate named `human` next to
       `ask_human`, route targets equal in their first 64 chars) and names over 64 chars (`route_to_` + a long node id) are only found
       when a job runs, and fail the step permanently. Compile could reject them.
+- [ ] 2026-10-08 `agentrun/output.go` — a retried agent step re-runs its tools: after an empty answer (`ErrEmptyAnswer`, retryable)
+      a tool that already acted (posted, wrote, sent) acts again. Seen live in `examples/socialsim`, whose `post` tool now
+      replaces a member's post within a round. Tools with side effects need idempotency keys; `stiggy.JobFromContext` gives
+      execution, node, index and attempt to build one. Worth documenting for tool authors.
+      Addressed 2026-10-08: `Job.StepID` (stable across retries, new per visit; `TestStepID`) and docs/reference.md. Inherent
+      to at-least-once delivery, so it stays open as a known property, not a bug. The step id relies on packtrail
+      rescheduling a retry with the same `Generation` (`internal/fold/decide.go`), which packtrail does not document.
 - [ ] 2026-10-07 `internal/stepio/stepio.go:181` — `ErrMissingField` is retryable: a `writes` path that can never resolve (e.g. `output.summary`
       on a step without `output_schema`) re-runs the whole agent, side-effecting tools included, until retries run out.
 - [ ] 2026-10-07 `agentrun/memory.go` — execution memory keeps `route_to_*` tool_use/tool_result turns; a later step of the same agent

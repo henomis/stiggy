@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -129,10 +130,7 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, err
 	}
 
-	runCtx, cancel := context.WithCancelCause(jobctx.With(ctx, jobctx.Job{
-		ExecID: job.ExecID, Flow: job.Flow, Node: job.Node, Agent: r.a.Name, Attempt: job.Attempt,
-		Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
-	}))
+	runCtx, cancel := context.WithCancelCause(jobctx.With(ctx, jobInfo(job, r.a.Name)))
 	defer cancel(nil)
 
 	ctl := &control{cancel: cancel}
@@ -185,6 +183,18 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 	result, err := h.finish(step, output, ctl.route(), usage, memoryWrite(r.a.Name, cm.turn()))
 
 	return result, worker.WithUsage(err, usage)
+}
+
+// jobInfo describes a job for its tools (stiggy.JobFromContext). The step
+// id is packtrail's task key and generation: a retry reschedules the task
+// with the same generation and the next attempt, while a revisit or a
+// resume allocates a new generation.
+func jobInfo(job *worker.Job, agentName string) jobctx.Job {
+	return jobctx.Job{
+		ExecID: job.ExecID, Flow: job.Flow, Node: job.Node, Agent: agentName,
+		StepID:  job.ExecID + "/" + job.Key + "/" + strconv.Itoa(job.Generation),
+		Attempt: job.Attempt, Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
+	}
 }
 
 // stepPrompt returns the job context and the step's prompt, with the

@@ -90,7 +90,7 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 			return nil, fmt.Errorf("agent %q: memory: %w", e.a.Name, merr)
 		}
 
-		ag.SetMemory(m)
+		ag.SetMemory(replayable{m})
 	}
 
 	return ag.Run(ctx, parts...)
