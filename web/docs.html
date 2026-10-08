@@ -223,7 +223,7 @@ make check        # test + examples + lint + vet</code></pre><p>The module depen
 <pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
 <span class="c-key">namespace</span>: newsroom
 <span class="c-key">models</span>:
-  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: gemma4:cloud}
+  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: llama3.2-eco}
 <span class="c-key">agents</span>:
   <span class="c-key">researcher</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Researcher, <span class="c-key">goal</span>: <span class="c-str">"Find accurate, recent facts."</span>}
   <span class="c-key">writer</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Writer, <span class="c-key">goal</span>: <span class="c-str">"Write short, clear articles."</span>}
@@ -265,7 +265,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
     <span class="c-key">temperature</span>: <span class="c-num">0.2</span>
     <span class="c-key">max_tokens</span>: <span class="c-num">1024</span>
     <span class="c-key">retries</span>: <span class="c-num">2</span>                <span class="c-com"># retry a failed call (exponential back-off)</span>
-    <span class="c-key">rate_limit</span>: {<span class="c-key">requests_per_minute</span>: <span class="c-num">60</span>, <span class="c-key">max_concurrent</span>: <span class="c-num">4</span>}   <span class="c-com"># per process</span></code></pre><p><code>ollama</code> uses Ollama's OpenAI-compatible endpoint (default <code>http://localhost:11434/v1</code>), for example <code>{provider: ollama, model: gemma4:cloud}</code>. In Go, <code>WithModel(name, llm)</code> registers a ready phero LLM and <code>WithModelSpec</code> the same struct as YAML.</p></section>
+    <span class="c-key">rate_limit</span>: {<span class="c-key">requests_per_minute</span>: <span class="c-num">60</span>, <span class="c-key">max_concurrent</span>: <span class="c-num">4</span>}   <span class="c-com"># per process</span></code></pre><p><code>ollama</code> uses Ollama's OpenAI-compatible endpoint (default <code>http://localhost:11434/v1</code>), for example <code>{provider: ollama, model: llama3.2-eco}</code>. In Go, <code>WithModel(name, llm)</code> registers a ready phero LLM and <code>WithModelSpec</code> the same struct as YAML.</p></section>
 <section id="tools"><h2>Tools</h2>
 <pre><code><span class="c-key">tools</span>:
   <span class="c-key">shell</span>: {<span class="c-key">type</span>: bash, <span class="c-key">allowlist</span>: [ls, cat], <span class="c-key">timeout</span>: 30s, <span class="c-key">working_dir</span>: /work}
@@ -453,7 +453,7 @@ docker compose -f deploy/docker-compose.yaml run --rm cli \
 app, err := stiggy.New(nc,
     stiggy.WithNamespace("newsroom"),
     stiggy.WithModel("fast", openai.New("ollama",
-        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel("gemma4:cloud"))),
+        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel("llama3.2-eco"))),
     stiggy.WithAgent("researcher", spec.Agent{Model: "fast", Role: "Researcher"}),
     stiggy.WithAgent("writer", spec.Agent{Model: "fast", Role: "Writer"}),
     stiggy.WithCrew("article", spec.Crew{Tasks: []spec.Task{
@@ -484,9 +484,9 @@ st, _ := app.Client().Wait(ctx, id)</code></pre>
 <tr><td id="ex-remote"><code>examples/remote</code></td><td>Another team's phero agent as a step and as a delegate</td></tr>
 </tbody></table></div>
 <pre><code>go run ./examples/router
-OLLAMA_MODEL=gemma4:cloud go run ./examples/mapreduce
+OLLAMA_MODEL=llama3.2-eco go run ./examples/mapreduce
 make examples        # scripted models, embedded server
-make examples-live   # a real model, default OLLAMA_MODEL=gemma4:cloud</code></pre></section>
+make examples-live   # a real model, default OLLAMA_MODEL=llama3.2-eco</code></pre></section>
 <section id="architecture"><h2>Architecture rules</h2>
 <h3>No direct NATS access</h3>
 <p>NATS is the only transport, and stiggy's own state lives in NATS (through packtrail). Agent storage you configure may be any backend phero offers. stiggy reaches NATS only through the public Go APIs of phero and packtrail:</p>

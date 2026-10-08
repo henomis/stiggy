@@ -17,7 +17,7 @@
 //
 // By default the model environment is cleared and the examples use their
 // scripted models, so the output is checked exactly. With
-// STIGGY_EXAMPLE_LIVE=1 the environment is kept (OLLAMA_MODEL=gemma4:cloud,
+// STIGGY_EXAMPLE_LIVE=1 the environment is kept (OLLAMA_MODEL=llama3.2-eco,
 // OPENAI_API_KEY, ...): the examples run against a real model, the output is
 // logged, and only success is required, since a real model's words vary.
 package extest

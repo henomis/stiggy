@@ -67,7 +67,7 @@ var ollamaLimit = &spec.RateLimit{MaxConcurrent: 1}
 
 // Model returns a real model when one is configured in the environment,
 // in this order:
-//   - OLLAMA_MODEL (Ollama on localhost, e.g. gemma4:cloud);
+//   - OLLAMA_MODEL (Ollama on localhost, e.g. llama3.2-eco);
 //   - OPENAI_API_KEY (OPENAI_MODEL, default gpt-4o-mini);
 //   - ANTHROPIC_API_KEY (ANTHROPIC_MODEL).
 //

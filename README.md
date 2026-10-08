@@ -30,7 +30,7 @@ go install github.com/henomis/stiggy/cmd/stiggy@latest
 # fleet.yaml
 namespace: newsroom
 models:
-  fast: {provider: ollama, model: gemma4:cloud}
+  fast: {provider: ollama, model: llama3.2-eco}
 agents:
   researcher: {model: fast, role: Researcher, goal: "Find accurate, recent facts."}
   writer: {model: fast, role: Writer, goal: "Write short, clear articles."}
@@ -56,7 +56,7 @@ nc, _ := nats.Connect(nats.DefaultURL)
 app, _ := stiggy.New(nc,
     stiggy.WithNamespace("newsroom"),
     stiggy.WithModel("fast", openai.New("ollama",
-        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel("gemma4:cloud"))),
+        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel("llama3.2-eco"))),
     stiggy.WithAgent("researcher", spec.Agent{Model: "fast", Role: "Researcher"}),
     stiggy.WithAgent("writer", spec.Agent{Model: "fast", Role: "Writer"}),
     stiggy.WithCrew("article", spec.Crew{Tasks: []spec.Task{
@@ -118,12 +118,12 @@ one otherwise:
 
 ```bash
 go run ./examples/router
-OLLAMA_MODEL=gemma4:cloud go run ./examples/mapreduce
+OLLAMA_MODEL=llama3.2-eco go run ./examples/mapreduce
 ```
 
 The examples are tests too. `make examples` runs them with the scripted
 models on an embedded server. `make examples-live` runs them against a real
-model, by default `OLLAMA_MODEL=gemma4:cloud`.
+model, by default `OLLAMA_MODEL=llama3.2-eco`.
 
 ## Deployment
 
@@ -151,7 +151,7 @@ make e2e            # end-to-end scenarios against a real model and Qdrant
 ```
 
 [e2e/](e2e) runs whole fleets against a real model through Ollama
-(`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce
+(`llama3.2-eco` by default, `STIGGY_E2E_MODEL` to change it): map-reduce
 research, plan-and-execute across three processes, RAG on Qdrant, a
 supervisor with file tools, human review with fork, execution and long-term
 memory, cross-team remote agents and delegates, a crew over the NATS Agent

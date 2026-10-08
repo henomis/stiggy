@@ -172,7 +172,7 @@
 
 <pre><span class="c-key">namespace</span>: newsroom
 <span class="c-key">models</span>:
-  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: gemma4:cloud}
+  <span class="c-key">fast</span>: {<span class="c-key">provider</span>: ollama, <span class="c-key">model</span>: llama3.2-eco}
 <span class="c-key">agents</span>:
   <span class="c-key">researcher</span>: {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Researcher, <span class="c-key">goal</span>: <span class="c-str">"Find accurate, recent facts."</span>}
   <span class="c-key">writer</span>:     {<span class="c-key">model</span>: fast, <span class="c-key">role</span>: Writer,     <span class="c-key">goal</span>: <span class="c-str">"Write short, clear articles."</span>}
@@ -266,7 +266,7 @@
 app, _ := stiggy.<span class="c-key">New</span>(nc,
     stiggy.<span class="c-key">WithNamespace</span>(<span class="c-str">"newsroom"</span>),
     stiggy.<span class="c-key">WithModel</span>(<span class="c-str">"fast"</span>, openai.<span class="c-key">New</span>(<span class="c-str">"ollama"</span>,
-        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel(<span class="c-str">"gemma4:cloud"</span>))),
+        openai.WithBaseURL(openai.OllamaBaseURL), openai.WithModel(<span class="c-str">"llama3.2-eco"</span>))),
     stiggy.<span class="c-key">WithAgent</span>(<span class="c-str">"researcher"</span>, spec.Agent{Model: <span class="c-str">"fast"</span>, Role: <span class="c-str">"Researcher"</span>}),
     stiggy.<span class="c-key">WithAgent</span>(<span class="c-str">"writer"</span>, spec.Agent{Model: <span class="c-str">"fast"</span>, Role: <span class="c-str">"Writer"</span>}),
     stiggy.<span class="c-key">WithCrew</span>(<span class="c-str">"article"</span>, spec.Crew{Tasks: []spec.Task{
