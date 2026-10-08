@@ -15,10 +15,12 @@
 package agentrun
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/henomis/packtrail/worker"
@@ -167,6 +169,28 @@ func TestParseOutput(t *testing.T) {
 	}
 }
 
+func TestCheckAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		text   string
+		routed bool
+		ok     bool
+	}{
+		{"an answer", false, true},
+		{"", false, false},
+		{" \n\t", false, false},
+		{"", true, true}, // the route is the decision
+	} {
+		err := checkAnswer(tc.text, tc.routed)
+		if tc.ok != (err == nil) {
+			t.Errorf("%q routed=%v: err = %v", tc.text, tc.routed, err)
+		}
+
+		if err != nil && (!errors.Is(err, ErrEmptyAnswer) || worker.IsPermanent(err)) {
+			t.Errorf("%q: err = %v, want a retryable ErrEmptyAnswer", tc.text, err)
+		}
+	}
+}
+
 func TestParseReply(t *testing.T) {
 	for raw, want := range map[string]reply{
 		`"blue"`:                 {Answer: "blue"},
@@ -205,5 +229,24 @@ func TestSteeringTools(t *testing.T) {
 
 	if ctl.instructions(spec.Step{}) != "" {
 		t.Error("a step without routes needs no instructions")
+	}
+
+	// A route asks for a handoff note, not a final answer: an answer would
+	// reach the next step as context, invented facts included.
+	res, err := tools[0].Handle(context.Background(), `{"reason": "need facts"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := fmt.Sprint(res); !strings.Contains(got, "handoff note") || strings.Contains(got, "final answer") {
+		t.Errorf("route result = %q, want a handoff note request", got)
+	}
+
+	if ctl.route() != "plan" {
+		t.Errorf("route = %q, want plan", ctl.route())
+	}
+
+	if in := ctl.instructions(spec.Step{Routes: []string{"plan"}}); !strings.Contains(in, "handoff note") {
+		t.Errorf("instructions = %q, want the handoff note explained", in)
 	}
 }

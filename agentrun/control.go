@@ -67,13 +67,13 @@ func (c *control) tools(s spec.Step) ([]*llm.Tool, error) {
 	for _, target := range s.DynamicTargets() {
 		t, err := llm.NewTool(routeToolPrefix+agent.SanitizeToolName(target),
 			fmt.Sprintf("Continue the workflow with step %q after your answer, instead of the default next step. "+
-				"Call it at most once, then give your final answer.", target),
+				"Call it at most once, then write a short handoff note for that step.", target),
 			func(_ context.Context, _ *routeInput) (string, error) {
 				c.mu.Lock()
 				c.next = target
 				c.mu.Unlock()
 
-				return fmt.Sprintf("Recorded: the workflow continues with %q. Now give your final answer.", target), nil
+				return handoffNote(target), nil
 			})
 		if err != nil {
 			return nil, err
@@ -109,6 +109,16 @@ func (c *control) tools(s spec.Step) ([]*llm.Tool, error) {
 	return tools, nil
 }
 
+// handoffNote is what a route tool answers. The agent's answer after a route
+// is the next step's context, so it must be a handoff, not an answer: asked
+// for a final answer, a model tends to invent the facts it routed away to
+// get, and the next step repeats them.
+func handoffNote(target string) string {
+	return fmt.Sprintf("Recorded: the workflow continues with %q. Now write a short handoff note for it: "+
+		"what you need from it, or what you leave to it. Do not answer on its behalf, and do not state "+
+		"facts you have not seen.", target)
+}
+
 // instructions explains the steering tools in the system prompt.
 func (c *control) instructions(s spec.Step) string {
 	var b strings.Builder
@@ -116,7 +126,7 @@ func (c *control) instructions(s spec.Step) string {
 	if len(s.DynamicTargets()) > 0 {
 		b.WriteString("\n\nThis task is one step of a workflow. When you are done, the workflow moves on " +
 			"to its default next step; to choose another step, call the matching " + routeToolPrefix +
-			"tool before your final answer.")
+			"tool, then write a short handoff note for that step instead of a final answer.")
 	}
 
 	if s.HasRoute(spec.RouteHuman) {

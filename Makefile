@@ -1,10 +1,10 @@
-.PHONY: all build test lint fmt vet clean coverage help license tidy fix check guard examples examples-live
+.PHONY: all build test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
 
 # Variables
 GO := go
 GOFLAGS := -v
 MODULE := $(shell $(GO) list -m)
-PKGS := $(shell $(GO) list ./... | grep -v /examples/)
+PKGS := $(shell $(GO) list ./... | grep -v -e /examples/ -e /e2e)
 GOLANGCI_LINT := golangci-lint
 BIN_DIR := bin
 
@@ -28,6 +28,9 @@ help:
 	@echo "  make check       - Run test + lint + vet"
 	@echo "  make examples    - Run the examples with their scripted models"
 	@echo "  make examples-live - Run the examples against a real model (OLLAMA_MODEL=gemma4:cloud by default)"
+	@echo "  make e2e         - Run the end-to-end tests against a real model and Qdrant (STIGGY_E2E_MODEL=gemma4:cloud by default; E2E_RUN=regexp)"
+	@echo "  make e2e-up      - Start the services the e2e tests need (Qdrant)"
+	@echo "  make e2e-down    - Stop them"
 	@echo "  make help        - Display this help message"
 
 ## build: Build the stiggy binary (static; honors GOOS/GOARCH)
@@ -95,6 +98,23 @@ examples:
 OLLAMA_MODEL ?= gemma4:cloud
 examples-live:
 	STIGGY_EXAMPLE_LIVE=1 OLLAMA_MODEL=$(OLLAMA_MODEL) $(GO) test -count=1 -v -timeout 30m ./examples/...
+
+## e2e-up: Start the services the e2e tests need (Qdrant) and wait for them
+E2E_COMPOSE := docker compose -f e2e/docker-compose.yaml
+e2e-up:
+	$(E2E_COMPOSE) up -d
+	@for i in $$(seq 60); do curl -sf http://localhost:6333/readyz >/dev/null && exit 0; sleep 1; done; \
+		echo "Qdrant is not ready"; exit 1
+
+## e2e-down: Stop the e2e services
+e2e-down:
+	$(E2E_COMPOSE) down
+
+## e2e: Run the end-to-end tests against a real model through Ollama, one at a time
+STIGGY_E2E_MODEL ?= gemma4:cloud
+E2E_RUN ?= .
+e2e: e2e-up
+	STIGGY_E2E=1 STIGGY_E2E_MODEL=$(STIGGY_E2E_MODEL) $(GO) test -count=1 -v -p 1 -timeout 60m -run '$(E2E_RUN)' ./e2e/
 
 ## check: Run all checks (test + lint + vet)
 check: test examples lint vet

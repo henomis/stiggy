@@ -43,6 +43,10 @@ func Crew(name string, c spec.Crew) (*flow.Flow, error) {
 		return nil, perr("tasks", "at least one task is required")
 	}
 
+	if err := checkRetry("retry", c.Retry); err != nil {
+		return nil, err
+	}
+
 	ids := map[string]bool{}
 
 	for _, t := range c.Tasks {
@@ -55,6 +59,10 @@ func Crew(name string, c spec.Crew) (*flow.Flow, error) {
 
 		if ids[t.ID] {
 			return nil, perr(path, "task id %q used twice", t.ID)
+		}
+
+		if err := checkRetry(path+".retry", t.Retry); err != nil {
+			return nil, err
 		}
 
 		ids[t.ID] = true
@@ -71,6 +79,15 @@ func Crew(name string, c spec.Crew) (*flow.Flow, error) {
 	}
 }
 
+// task adds the agent step of a task, with its output schema and its own
+// retry (the crew's applies when it has none).
+func (b *builder) task(t spec.Task, context []string) *flow.Node {
+	n := b.agent(t.ID, taskStep(t, context))
+	n.OutputSchema, n.Retry = t.OutputSchema, cloneRetry(t.Retry)
+
+	return n
+}
+
 // taskStep is the agent step of a task.
 func taskStep(t spec.Task, context []string) spec.Step {
 	return spec.Step{
@@ -83,7 +100,7 @@ func taskStep(t spec.Task, context []string) spec.Step {
 // fan-out joined before the next task.
 func sequential(name string, c spec.Crew) (*flow.Flow, error) {
 	groups := groupAsync(c.Tasks)
-	b := newBuilder(name, c.MaxSteps, c.Budget)
+	b := newBuilder(name, c.MaxSteps, c.Budget, c.Retry)
 
 	// entry returns the first node of group i ("" past the last).
 	entry := func(i int) string {
@@ -121,8 +138,7 @@ func sequential(name string, c spec.Crew) (*flow.Flow, error) {
 				return nil, perr("tasks."+t.ID+".guardrail", "an async task cannot have a guardrail")
 			}
 
-			n := b.agent(t.ID, taskStep(t, defaultContext(t, prev)))
-			n.OutputSchema = t.OutputSchema
+			b.task(t, defaultContext(t, prev))
 			branches = append(branches, t.ID)
 		}
 
@@ -172,8 +188,7 @@ func defaultContext(t spec.Task, prev []string) []string {
 func addTask(b *builder, t spec.Task, context []string, next string) error {
 	g := t.Guardrail
 	if g == nil {
-		n := b.agent(t.ID, taskStep(t, context))
-		n.OutputSchema, n.Next = t.OutputSchema, next
+		b.task(t, context).Next = next
 
 		return nil
 	}
@@ -190,8 +205,7 @@ func addTask(b *builder, t spec.Task, context []string, next string) error {
 	guard, check := t.ID+guardSuffix, t.ID+checkSuffix
 
 	// On a retry the task sees the checker's feedback too.
-	n := b.agent(t.ID, taskStep(t, append(append([]string{}, context...), guard)))
-	n.OutputSchema, n.Next = t.OutputSchema, guard
+	b.task(t, append(append([]string{}, context...), guard)).Next = guard
 
 	gn := b.agent(guard, spec.Step{
 		Agent:   g.Agent,
@@ -265,7 +279,7 @@ func hierarchical(name string, c spec.Crew) (*flow.Flow, error) {
 		ids = append(ids, t.ID)
 	}
 
-	b := newBuilder(name, maxStepsOr(c.MaxSteps, stepsPerTask*len(c.Tasks)+stepsPerTask), c.Budget)
+	b := newBuilder(name, maxStepsOr(c.MaxSteps, stepsPerTask*len(c.Tasks)+stepsPerTask), c.Budget, c.Retry)
 	b.agent(managerNode, spec.Step{
 		Agent:  c.Manager,
 		Routes: ids,
@@ -275,9 +289,7 @@ func hierarchical(name string, c spec.Crew) (*flow.Flow, error) {
 	})
 
 	for _, t := range c.Tasks {
-		n := b.agent(t.ID, taskStep(t, append([]string{managerNode}, t.Context...)))
-		n.OutputSchema = t.OutputSchema
-		n.Next = managerNode
+		b.task(t, append([]string{managerNode}, t.Context...)).Next = managerNode
 	}
 
 	b.f.Output = resultOf(managerNode)

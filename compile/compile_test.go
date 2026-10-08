@@ -358,6 +358,39 @@ patterns:
 			},
 		},
 		{
+			name: "rate limits",
+			yaml: `
+models:
+  empty: {provider: openai, rate_limit: {}}
+  negative: {provider: openai, rate_limit: {requests_per_minute: -1, max_concurrent: 2}}
+`,
+			want: []string{
+				`3: models.empty.rate_limit: set requests_per_minute, max_concurrent or both`,
+				`4: models.negative.rate_limit: requests_per_minute and max_concurrent must not be negative`,
+			},
+		},
+		{
+			name: "crew and pattern retries",
+			yaml: `
+models: {m: {provider: openai}}
+agents: {a: {model: m}, b: {model: m}}
+crews:
+  c:
+    retry: {max_attempts: 99}
+    tasks: [{id: t, agent: a, description: d}]
+  d:
+    tasks:
+      - {id: t, agent: a, description: d, retry: {max_attempts: 2, backoff: zigzag}}
+patterns:
+  p: {type: evaluator_optimizer, generator: a, evaluator: b, retry: {max_attempts: -1}}
+`,
+			want: []string{
+				`6: crews.c.retry.max_attempts: must be between 0 and 64`,
+				`10: crews.d.tasks.t.retry.backoff: unknown backoff "zigzag"`,
+				`12: patterns.p.retry.max_attempts: must be between 0 and 64`,
+			},
+		},
+		{
 			name: "subflow reference",
 			yaml: `
 flows:

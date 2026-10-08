@@ -20,6 +20,8 @@ package natsconn
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 )
@@ -63,8 +65,30 @@ func Connect(cfg Config) (*nats.Conn, error) {
 
 	nc, err := nats.Connect(cfg.URL, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("natsconn: connect %s: %w", cfg.URL, err)
+		return nil, fmt.Errorf("natsconn: connect %s: %w", redact(cfg.URL), err)
 	}
 
 	return nc, nil
+}
+
+// redact drops the credentials (user, password or token) from each of the
+// comma-separated server URLs, so an error never prints them.
+func redact(urls string) string {
+	parts := strings.Split(urls, ",")
+	for i, p := range parts {
+		u, err := url.Parse(strings.TrimSpace(p))
+		if err != nil {
+			parts[i] = "<invalid url>"
+
+			continue
+		}
+
+		if u.User != nil {
+			u.User = url.User("redacted")
+		}
+
+		parts[i] = u.String()
+	}
+
+	return strings.Join(parts, ",")
 }

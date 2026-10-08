@@ -105,7 +105,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 	app, err := stiggy.New(nc,
 		stiggy.WithNamespace("example-router"),
 		stiggy.WithLogger(exutil.Quiet()),
-		stiggy.WithModel("main", model),
+		stiggy.WithModelSpec("main", model),
 		stiggy.WithAgent("triage", spec.Agent{Model: "main", Role: "Triage", Goal: "Send each ticket to the right team."}),
 		stiggy.WithAgent("billing", spec.Agent{Model: "main", Role: "Billing support", Goal: "Solve invoice issues."}),
 		stiggy.WithAgent("tech", spec.Agent{Model: "main", Role: "Tech support", Goal: "Solve technical issues."}),

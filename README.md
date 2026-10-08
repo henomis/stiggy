@@ -111,8 +111,9 @@ watch and stream progress from it.
 | [crew](examples/crew) | A crew with a guardrail, also served as a protocol agent |
 | [remote](examples/remote) | Another team's phero agent as a step and as a delegate |
 
-Each runs against `$NATS_URL`, with a real model when `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY` or `OLLAMA_MODEL` is set, and a scripted one otherwise:
+Each runs against `$NATS_URL`, with a real model when `OLLAMA_MODEL`,
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set (in that order), and a scripted
+one otherwise:
 
 ```bash
 go run ./examples/router
@@ -145,9 +146,19 @@ make test           # tests with -race
 make check          # test + lint + vet
 make examples       # the examples, scripted
 make examples-live  # the examples, against a real model
+make e2e            # end-to-end scenarios against a real model and Qdrant
 ```
 
-Requires Go 1.26.4. Depends on the released `phero/v2` v2.0.0 and `packtrail` v1.0.0.
+[e2e/](e2e) runs whole fleets against a real model through Ollama
+(`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce
+research, plan-and-execute across three processes, RAG on Qdrant, a
+supervisor with file tools, human review with fork, execution and long-term
+memory, cross-team remote agents and delegates, a crew over the NATS Agent
+Protocol, and the evaluator and debate patterns. `make e2e` starts Qdrant with
+Docker (`make e2e-down` stops it) and needs Ollama with `nomic-embed-text` for
+embeddings; `E2E_RUN=TestName` runs one scenario.
+
+Requires Go 1.26.4. Depends on the released `phero/v2` v2.0.0 and `packtrail` v1.0.1-rc.1.
 
 ## License
 

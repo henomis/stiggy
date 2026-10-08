@@ -16,6 +16,7 @@ package natsconn_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/henomis/packtrail/packtrailtest"
@@ -46,5 +47,18 @@ func TestConnectEmptyURL(t *testing.T) {
 func TestConnectUnreachable(t *testing.T) {
 	if _, err := natsconn.Connect(natsconn.Config{URL: "nats://127.0.0.1:1"}); err == nil {
 		t.Fatal("expected an error for an unreachable server")
+	}
+}
+
+func TestConnectErrorHidesCredentials(t *testing.T) {
+	_, err := natsconn.Connect(natsconn.Config{URL: "nats://admin:s3cret@127.0.0.1:1, nats://tok3n@127.0.0.1:2"})
+	if err == nil {
+		t.Fatal("expected an error for an unreachable server")
+	}
+
+	for _, secret := range []string{"s3cret", "tok3n"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("err = %q, leaks %q", err, secret)
+		}
 	}
 }

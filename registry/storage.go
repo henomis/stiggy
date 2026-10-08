@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/henomis/phero/v2/embedding"
 	"github.com/henomis/phero/v2/llm"
@@ -224,9 +223,4 @@ func (r *Registry) BuildVectorStore(ctx context.Context, name string, v spec.Vec
 	}
 
 	return out, nil
-}
-
-// sessionFile is the file of a session in a jsonfile memory directory.
-func sessionFile(dir, session string) string {
-	return filepath.Join(dir, session+".json")
 }

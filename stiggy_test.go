@@ -378,3 +378,108 @@ func TestModelRetriesAndRateLimit(t *testing.T) {
 		t.Fatalf("status %s (%s), calls %d", st.Status, st.Error, calls.Load())
 	}
 }
+
+// TestMaxConcurrentAlone checks a rate limit with only max_concurrent bounds
+// the calls in flight, with no rate: four parallel map items reach a model
+// limited to one call at a time.
+func TestMaxConcurrentAlone(t *testing.T) {
+	var inFlight, peak atomic.Int64
+
+	slow := llm.Func(func(ctx context.Context, msgs []llm.Message, opts ...llm.CallOption) (*llm.Result, error) {
+		n := inFlight.Add(1)
+		defer inFlight.Add(-1)
+
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+
+		time.Sleep(30 * time.Millisecond)
+
+		return stiggytest.Echo("").Execute(ctx, msgs, opts...)
+	})
+
+	h := startYAML(t, `
+agents: {a: {model: m}}
+flows:
+  f:
+    nodes:
+      - {id: each, type: map, over: input.items, max_parallel: 4, agent: a, prompt: "{{.item}}"}
+`, nil, stiggy.WithModelSpec("m", spec.Model{Instance: slow, RateLimit: &spec.RateLimit{MaxConcurrent: 1}}))
+
+	st := h.Run(t, "f", map[string]any{"items": []string{"a", "b", "c", "d"}})
+	if st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	if peak.Load() != 1 {
+		t.Fatalf("peak concurrency = %d, want 1", peak.Load())
+	}
+}
+
+// TestToolNameClash checks Run stops before it is ready when two of an
+// agent's tools have the same name (what the model sees, not the fleet's
+// keys), instead of failing every step of that agent.
+func TestToolNameClash(t *testing.T) {
+	askHelper, err := llm.NewTool("ask_helper", "Clashes with the delegate.",
+		func(context.Context, *struct{}) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct {
+		doc  string
+		opts []stiggy.Option
+		want string
+	}{
+		"two entries of one type": {doc: `
+tools:
+  docs: {type: file_read, working_dir: /tmp}
+  code: {type: file_read, working_dir: /tmp}
+agents: {a: {model: m, tools: [docs, code]}}
+`, want: `agent "a": tool "docs" and tool "code" both provide "read"`},
+		"a tool and a delegate": {doc: `
+agents:
+  a: {model: m, tools: [custom], delegates: [helper]}
+  helper: {model: m}
+`, opts: []stiggy.Option{stiggy.WithTool("custom", askHelper)},
+			want: `agent "a": tool "custom" and delegate "helper" both provide "ask_helper"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fleet, src, perr := config.Parse([]byte(tc.doc + `
+flows:
+  f:
+    nodes:
+      - {id: s, type: task, agent: a}
+`))
+			if perr != nil {
+				t.Fatalf("%s", strings.Join(src.Describe(perr), "\n"))
+			}
+
+			srv := packtrailtest.Start(t)
+
+			app, nerr := stiggy.New(srv.Connect(t), append([]stiggy.Option{
+				stiggy.WithFleet(fleet), stiggy.WithModel("m", stiggytest.Echo("")),
+			}, tc.opts...)...)
+			if nerr != nil {
+				t.Fatal(nerr)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), stiggytest.Timeout)
+			defer cancel()
+
+			rerr := app.Run(ctx)
+			if !errors.Is(rerr, stiggy.ErrToolClash) || !strings.Contains(rerr.Error(), tc.want) {
+				t.Fatalf("Run = %v, want %q", rerr, tc.want)
+			}
+
+			select {
+			case <-app.Ready():
+				t.Fatal("the app became ready")
+			default:
+			}
+		})
+	}
+}

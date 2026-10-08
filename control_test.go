@@ -523,3 +523,73 @@ flows:
 		t.Fatalf("failed node = %q, want draft", st.FailedNode)
 	}
 }
+
+// TestEmptyAnswer checks an empty answer is an error the node's retry policy
+// absorbs, fails the step without one, and is accepted when the agent chose
+// a route (the route is the step's decision).
+func TestEmptyAnswer(t *testing.T) {
+	t.Run("retried", func(t *testing.T) {
+		h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {writer: {model: m}}
+flows:
+  f:
+    nodes:
+      - {id: s, type: task, agent: writer, retry: {max_attempts: 3, delay: 10ms}}
+`, map[string]llm.LLM{"m": stiggytest.Replies("", " \n", "an answer")})
+
+		st := h.Run(t, "f", map[string]any{})
+
+		var out struct{ Text string }
+		if err := st.DecodeOutput(&out); err != nil || out.Text != "an answer" {
+			t.Fatalf("output = %+v, %v (status %s %s)", out, err, st.Status, st.Error)
+		}
+
+		if st.Counters["agent_steps"] != 3 {
+			t.Fatalf("counters = %v, want every attempt charged", st.Counters)
+		}
+	})
+
+	t.Run("fails without retry", func(t *testing.T) {
+		h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {writer: {model: m}}
+flows:
+  f:
+    nodes:
+      - {id: s, type: task, agent: writer, next: after}
+      - {id: after, type: task, agent: writer}
+`, map[string]llm.LLM{"m": stiggytest.Replies("")})
+
+		st := h.Run(t, "f", map[string]any{})
+		if st.Status != packtrail.StatusFailed || st.FailedNode != "s" || !strings.Contains(st.Error, "empty") {
+			t.Fatalf("status %s at %q: %s", st.Status, st.FailedNode, st.Error)
+		}
+	})
+
+	t.Run("allowed with a route", func(t *testing.T) {
+		router := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+			if len(r.ToolResults) == 0 {
+				return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "route_to_b", Args: map[string]any{}}}}
+			}
+
+			return stiggytest.Response{}
+		})
+
+		h := startYAML(t, `
+models: {r: {provider: x}, m: {provider: x}}
+agents: {router: {model: r}, worker: {model: m}}
+flows:
+  f:
+    start: a
+    nodes:
+      - {id: a, type: task, agent: router, routes: [b]}
+      - {id: b, type: task, agent: worker}
+`, map[string]llm.LLM{"r": router, "m": stiggytest.Echo("b: ")})
+
+		st := h.Run(t, "f", map[string]any{})
+		if st.Status != packtrail.StatusCompleted || st.Visits["b"] != 1 {
+			t.Fatalf("status %s (%s), visits %v", st.Status, st.Error, st.Visits)
+		}
+	})
+}

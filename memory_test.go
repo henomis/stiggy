@@ -31,6 +31,7 @@ import (
 	"github.com/henomis/phero/v2/vectorstore"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/registry"
 	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
 )
@@ -350,5 +351,41 @@ func TestKnowledge(t *testing.T) {
 	var out struct{ Text string }
 	if err = st.DecodeOutput(&out); err != nil || !strings.Contains(out.Text, "14 days") {
 		t.Fatalf("output = %q, %v (status %s %s)", out.Text, err, st.Status, st.Error)
+	}
+}
+
+// TestVectorStoreDefer checks that a vector store type may register its
+// cleanup through Env.Defer while the app builds its knowledge.
+func TestVectorStoreDefer(t *testing.T) {
+	var closed atomic.Bool
+
+	reg := registry.New()
+	if err := reg.RegisterVectorStoreType("deferring", registry.NewVectorStoreType(
+		func(_ context.Context, _ struct{}, env registry.Env) (vectorstore.Store, error) {
+			env.Defer(func() error { closed.Store(true); return nil })
+
+			return &memStore{}, nil
+		})); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("run", func(t *testing.T) {
+		startYAML(t, `
+models: {m: {provider: x}}
+vectorstores: {vs: {type: deferring}}
+knowledge:
+  docs: {embedder: words, vectorstore: vs, description: Docs.}
+agents:
+  support: {model: m, knowledge: [docs]}
+flows:
+  ask:
+    nodes:
+      - {id: a, type: task, agent: support}
+`, map[string]llm.LLM{"m": stiggytest.Reply(func(string) string { return "ok" })},
+			stiggy.WithRegistry(reg), stiggy.WithEmbedder("words", &wordEmbedder{}))
+	})
+
+	if !closed.Load() {
+		t.Fatal("the vector store's deferred cleanup did not run")
 	}
 }

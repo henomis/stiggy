@@ -153,7 +153,7 @@ func Empty() *Registry {
 //   - LLM providers: openai, anthropic, ollama;
 //   - tool types: bash, file_read, file_write, file_edit, glob, grep, skill,
 //     kv, mcp;
-//   - memory types: simple, jsonfile, nats, psql, rag;
+//   - memory types: simple, nats, psql, rag;
 //   - embedding providers: openai, ollama;
 //   - vector stores: qdrant, psql, weaviate.
 func New() *Registry {

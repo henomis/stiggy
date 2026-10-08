@@ -136,7 +136,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 	teamCtx, stopTeam := context.WithCancel(ctx)
 	defer stopTeam()
 
-	if _, err := legalTeam(teamCtx, nc, model, out); err != nil {
+	if _, err := legalTeam(teamCtx, nc, model.Instance, out); err != nil {
 		return err
 	}
 
@@ -145,7 +145,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		return fmt.Errorf("%s", strings.Join(src.Describe(err), "\n"))
 	}
 
-	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModel("main", model), stiggy.WithLogger(exutil.Quiet()))
+	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(exutil.Quiet()))
 	if err != nil {
 		return err
 	}

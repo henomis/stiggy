@@ -84,8 +84,15 @@ func Supervisor(name string, p spec.Pattern) (*flow.Flow, error) {
 		return nil, perr("workers", "the supervisor %q cannot also be a worker", p.Supervisor)
 	}
 
-	b := newBuilder(name, maxStepsOr(p.MaxSteps, stepsPerWorker*len(p.Workers)+stepsPerWorker), p.Budget)
-	b.agent(p.Supervisor, spec.Step{Agent: p.Supervisor, Prompt: p.Prompt, Routes: p.Workers})
+	b := newBuilder(name, maxStepsOr(p.MaxSteps, stepsPerWorker*len(p.Workers)+stepsPerWorker), p.Budget, p.Retry)
+	// A custom prompt replaces the default one, which carries the report of
+	// the worker that handed back: ask for the workers' outputs explicitly.
+	sup := spec.Step{Agent: p.Supervisor, Prompt: p.Prompt, Routes: p.Workers}
+	if p.Prompt != "" {
+		sup.Context = p.Workers
+	}
+
+	b.agent(p.Supervisor, sup)
 
 	for _, w := range p.Workers {
 		b.agent(w, spec.Step{Agent: w}).Next = p.Supervisor
@@ -102,12 +109,14 @@ func Swarm(name string, p spec.Pattern) (*flow.Flow, error) {
 		return nil, err
 	}
 
-	b := newBuilder(name, maxStepsOr(p.MaxSteps, stepsPerWorker*len(p.Agents)), p.Budget)
+	b := newBuilder(name, maxStepsOr(p.MaxSteps, stepsPerWorker*len(p.Agents)), p.Budget, p.Retry)
 
 	for i, a := range p.Agents {
 		s := spec.Step{Agent: a, Routes: others(p.Agents, a)}
-		if i == 0 {
-			s.Prompt = p.Prompt
+		if i == 0 && p.Prompt != "" {
+			// As for the supervisor: the custom prompt must still show what
+			// the agent that handed back produced.
+			s.Prompt, s.Context = p.Prompt, s.Routes
 		}
 
 		b.agent(a, s)
@@ -130,7 +139,7 @@ func EvaluatorOptimizer(name string, p spec.Pattern) (*flow.Flow, error) {
 		rounds = defaultMaxRounds
 	}
 
-	b := newBuilder(name, p.MaxSteps, p.Budget)
+	b := newBuilder(name, p.MaxSteps, p.Budget, p.Retry)
 
 	b.agent(nodeGenerate, spec.Step{Agent: p.Generator, Prompt: p.Prompt, Context: []string{nodeEvaluate}}).
 		Next = nodeEvaluate
@@ -139,7 +148,7 @@ func EvaluatorOptimizer(name string, p spec.Pattern) (*flow.Flow, error) {
 		Agent:   p.Evaluator,
 		Context: []string{nodeGenerate},
 		Prompt: "Evaluate the output below against the task. Set pass to true when it is good enough; " +
-			"otherwise explain what to improve in feedback.\n\nTask:\n{{json .input}}",
+			"otherwise explain what to improve in feedback.\n\nTask:\n" + taskOf(p),
 	})
 	ev.OutputSchema = verdictSchema("pass")
 	ev.Next = nodeCheck
@@ -176,15 +185,12 @@ func Debate(name string, p spec.Pattern) (*flow.Flow, error) {
 		rounds = defaultRounds
 	}
 
-	b := newBuilder(name, p.MaxSteps, p.Budget)
+	b := newBuilder(name, p.MaxSteps, p.Budget, p.Retry)
 	b.f.Channels = map[string]flow.Channel{chanTranscript: {Reducer: flow.ReducerAppend}}
 
 	b.add(flow.Node{ID: nodeRound, Type: flow.NodeFanout, Branches: p.Debaters, Next: nodeGather})
 
-	topic := p.Prompt
-	if topic == "" {
-		topic = "{{json .input}}"
-	}
+	topic := taskOf(p)
 
 	for _, d := range p.Debaters {
 		b.agent(d, spec.Step{
@@ -225,7 +231,7 @@ func PlanExecute(name string, p spec.Pattern) (*flow.Flow, error) {
 		maxPar = defaultMaxParallel
 	}
 
-	b := newBuilder(name, p.MaxSteps, p.Budget)
+	b := newBuilder(name, p.MaxSteps, p.Budget, p.Retry)
 	b.f.Channels = map[string]flow.Channel{chanResults: {Reducer: flow.ReducerAppend}}
 
 	prompt := p.Prompt
@@ -250,7 +256,7 @@ func PlanExecute(name string, p spec.Pattern) (*flow.Flow, error) {
 	exec := flow.Node{ID: nodeExecute, Type: flow.NodeMap, Over: over, MaxParallel: maxPar}
 	if err := spec.ApplyStep(&exec, spec.Step{
 		Agent:  p.Executor,
-		Prompt: "Carry out this step:\n{{.item}}\n\nIt is part of this task:\n{{json .input}}",
+		Prompt: "Carry out this step:\n{{.item}}\n\nIt is part of this task:\n" + taskOf(p),
 		Writes: map[string]string{chanResults: "output." + spec.OutputText},
 	}); err != nil {
 		return nil, err
@@ -267,13 +273,25 @@ func PlanExecute(name string, p spec.Pattern) (*flow.Flow, error) {
 	b.f.Nodes[len(b.f.Nodes)-1].Next = nodeSynthesize
 	b.agent(nodeSynthesize, spec.Step{
 		Agent: p.Synthesizer,
-		Prompt: "Combine these step results into the final answer to the task.\n\nTask:\n{{json .input}}" +
+		Prompt: "Combine these step results into the final answer to the task.\n\nTask:\n" + taskOf(p) +
 			"\n\nStep results:\n{{json .channels.results}}",
 	})
 
 	b.f.Output = resultOf(nodeSynthesize)
 
 	return b.done(nodePlan)
+}
+
+// taskOf is how a pattern's steps describe the task: the custom prompt when
+// there is one (a template, rendered in each step's context), the input
+// otherwise. Every step that refers to the task uses it, so none of them
+// judges, executes or combines without the instructions the prompt gives.
+func taskOf(p spec.Pattern) string {
+	if p.Prompt != "" {
+		return p.Prompt
+	}
+
+	return "{{json .input}}"
 }
 
 // verdictSchema is the structured output of a judging step.

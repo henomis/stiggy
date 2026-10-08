@@ -17,6 +17,7 @@ package stiggy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -33,7 +34,10 @@ import (
 
 // HeaderExecutionID is the request header a caller of an exposed flow sets
 // to choose the execution id: retrying the same prompt with the same id
-// joins the execution instead of starting another.
+// joins the execution instead of starting another. An id of another flow's
+// execution is refused with a 409 ("execution_conflict"). The execution
+// outlives the prompt: it is not cancelled when the caller or the server goes
+// away.
 const HeaderExecutionID = "Stiggy-Execution-Id"
 
 // AgentID is the protocol's framework name of everything stiggy serves.
@@ -54,13 +58,22 @@ type flowAgent struct {
 func (f *flowAgent) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
 	var opts []packtrail.StartOption
 
+	callerID := ""
+
 	if req, ok := natsagent.RequestFrom(ctx); ok {
-		if id := req.Header.Get(HeaderExecutionID); id != "" {
-			opts = append(opts, packtrail.WithExecutionID(id))
+		if callerID = req.Header.Get(HeaderExecutionID); callerID != "" {
+			opts = append(opts, packtrail.WithExecutionID(callerID))
 		}
 	}
 
 	id, err := f.client.Start(ctx, f.flow, flowInput(llm.TextContent(parts...)), opts...)
+	if errors.Is(err, packtrail.ErrExecutionConflict) {
+		return nil, &natsagent.CodedError{
+			Code: http.StatusConflict, ErrCode: "execution_conflict",
+			Message: fmt.Sprintf("execution %s belongs to another flow", callerID), Err: err,
+		}
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("start %s: %w", f.flow, err)
 	}
@@ -68,8 +81,9 @@ func (f *flowAgent) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.R
 	st, err := f.client.Wait(ctx, id)
 	if err != nil {
 		// The caller is gone (or the server is shutting down): the answer
-		// would reach nobody, so stop spending on it.
-		if ctx.Err() != nil {
+		// would reach nobody, so stop spending on it. An execution the
+		// caller named stays: a retry with its id joins it.
+		if ctx.Err() != nil && callerID == "" {
 			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelGrace)
 			defer cancel()
 

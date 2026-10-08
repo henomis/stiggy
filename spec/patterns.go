@@ -14,6 +14,8 @@
 
 package spec
 
+import "github.com/henomis/packtrail/flow"
+
 // Crew processes.
 const (
 	ProcessSequential   = "sequential"
@@ -42,6 +44,9 @@ type Crew struct {
 	MaxSteps int `yaml:"max_steps,omitempty" json:"max_steps,omitempty"`
 	// Budget caps usage counters (tokens_out, agent_steps, cost_usd, ...).
 	Budget map[string]float64 `yaml:"budget,omitempty" json:"budget,omitempty"`
+	// Retry is the retry policy of every agent step the crew runs (tasks,
+	// guardrail checks, the manager); nil means one attempt.
+	Retry *flow.Retry `yaml:"retry,omitempty" json:"retry,omitempty"`
 }
 
 // Task is one task of a crew.
@@ -63,6 +68,8 @@ type Task struct {
 	// Guardrail has an agent check the task's output; a rejected output is
 	// redone with the checker's feedback.
 	Guardrail *Guardrail `yaml:"guardrail,omitempty" json:"guardrail,omitempty"`
+	// Retry overrides the crew's retry policy for this task's own step.
+	Retry *flow.Retry `yaml:"retry,omitempty" json:"retry,omitempty"`
 }
 
 // Guardrail checks a task's output with an agent.
@@ -107,4 +114,7 @@ type Pattern struct {
 	Prompt   string             `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	MaxSteps int                `yaml:"max_steps,omitempty" json:"max_steps,omitempty"`
 	Budget   map[string]float64 `yaml:"budget,omitempty" json:"budget,omitempty"`
+	// Retry is the retry policy of every agent step the pattern runs; nil
+	// means one attempt.
+	Retry *flow.Retry `yaml:"retry,omitempty" json:"retry,omitempty"`
 }

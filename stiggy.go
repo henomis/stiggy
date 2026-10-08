@@ -43,6 +43,7 @@ var (
 	ErrAlreadyRun  = errors.New("stiggy: Run called twice")
 	ErrNotReady    = errors.New("stiggy: stopped before it was ready")
 	ErrWriteClash  = errors.New("stiggy: activity writes a channel its step also writes")
+	ErrToolClash   = errors.New("stiggy: two tools of an agent have the same name")
 	errWorkerEnded = errors.New("stiggy: worker stopped")
 )
 
@@ -312,7 +313,9 @@ func (a *App) startWorkers(ctx context.Context, wg *sync.WaitGroup, errc chan er
 		return err
 	}
 
-	wkCtx, cancel := context.WithCancel(ctx)
+	// Workers outlive the exposed servers: a prompt they finish may still
+	// need its flow's next steps. Run stops them once the servers drained.
+	wkCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	a.stopWorkers = cancel
 
 	readies := make([]chan struct{}, 0, len(handlers))

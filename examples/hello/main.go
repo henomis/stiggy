@@ -78,7 +78,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 	}))
 	fmt.Fprintln(out, "model:", desc)
 
-	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModel("main", model), stiggy.WithLogger(exutil.Quiet()))
+	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(exutil.Quiet()))
 	if err != nil {
 		return err
 	}

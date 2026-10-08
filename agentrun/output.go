@@ -37,6 +37,12 @@ const maxFormatName = 64
 // next attempt.
 var ErrNotJSONObject = errors.New("agentrun: the answer is not a JSON object")
 
+// ErrEmptyAnswer is returned when an agent or a remote agent answers with no
+// text, which some models do now and then (after tool calls, for one). It is
+// retryable, so the node's retry policy can ask again; without one the step
+// fails rather than passing an empty answer on.
+var ErrEmptyAnswer = errors.New("agentrun: the answer is empty")
+
 // flowCache keeps the flow versions jobs belong to; a version never changes.
 type flowCache struct {
 	src FlowSource
@@ -117,6 +123,25 @@ func responseFormat(node string, schema map[string]any) (*llm.ResponseFormat, er
 	}
 
 	return f, nil
+}
+
+// checkAnswer rejects an empty answer, unless the agent chose a route: then
+// the route is the step's decision, and its answer only a note.
+func checkAnswer(text string, routed bool) error {
+	if routed || strings.TrimSpace(text) != "" {
+		return nil
+	}
+
+	return ErrEmptyAnswer
+}
+
+// answerOutput checks an answer and turns it into the step output.
+func answerOutput(text string, schema map[string]any, routed bool) (any, error) {
+	if err := checkAnswer(text, routed); err != nil {
+		return nil, err
+	}
+
+	return parseOutput(text, schema)
 }
 
 // parseOutput turns an answer into the step output: {"text": answer}

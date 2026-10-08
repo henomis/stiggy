@@ -37,6 +37,7 @@ import (
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/internal/natsconn"
+	"github.com/henomis/stiggy/spec"
 )
 
 // readyTimeout bounds how long an example waits for its app.
@@ -56,31 +57,50 @@ func Connect() (*nats.Conn, error) {
 	return natsconn.Connect(natsconn.Config{URL: url, Name: "stiggy-example"})
 }
 
-// Model returns a real model when one is configured in the environment:
+// realRetries is how many times a real model's failed call is retried, so a
+// provider's transient errors (rate limits, 429s) do not fail an example.
+const realRetries = 5
+
+// ollamaLimit sends one request at a time: Ollama cloud models answer 429
+// to concurrent requests.
+var ollamaLimit = &spec.RateLimit{MaxConcurrent: 1}
+
+// Model returns a real model when one is configured in the environment,
+// in this order:
+//   - OLLAMA_MODEL (Ollama on localhost, e.g. gemma4:cloud);
 //   - OPENAI_API_KEY (OPENAI_MODEL, default gpt-4o-mini);
-//   - ANTHROPIC_API_KEY (ANTHROPIC_MODEL);
-//   - OLLAMA_MODEL (Ollama on localhost).
+//   - ANTHROPIC_API_KEY (ANTHROPIC_MODEL).
 //
-// Otherwise it returns scripted, so every example runs offline.
-func Model(scripted llm.LLM) (llm.LLM, string) {
+// OLLAMA_MODEL comes first because naming a model is an explicit choice,
+// while an API key may just be lying around in the environment. Otherwise
+// it returns scripted, so every example runs offline. Real models retry
+// failed calls.
+func Model(scripted llm.LLM) (spec.Model, string) {
 	switch {
+	case os.Getenv("OLLAMA_MODEL") != "":
+		m := os.Getenv("OLLAMA_MODEL")
+
+		return spec.Model{
+			Instance:  openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel(m)),
+			Retries:   realRetries,
+			RateLimit: ollamaLimit,
+		}, "ollama " + m
 	case os.Getenv("OPENAI_API_KEY") != "":
 		m := envOr("OPENAI_MODEL", "gpt-4o-mini")
 
-		return openai.New(os.Getenv("OPENAI_API_KEY"), openai.WithModel(m)), "openai " + m
+		return spec.Model{
+			Instance: openai.New(os.Getenv("OPENAI_API_KEY"), openai.WithModel(m)),
+			Retries:  realRetries,
+		}, "openai " + m
 	case os.Getenv("ANTHROPIC_API_KEY") != "":
 		var opts []anthropic.Option
 		if m := os.Getenv("ANTHROPIC_MODEL"); m != "" {
 			opts = append(opts, anthropic.WithModel(m))
 		}
 
-		return anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), opts...), "anthropic"
-	case os.Getenv("OLLAMA_MODEL") != "":
-		m := os.Getenv("OLLAMA_MODEL")
-
-		return openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel(m)), "ollama " + m
+		return spec.Model{Instance: anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), opts...), Retries: realRetries}, "anthropic"
 	default:
-		return scripted, "scripted (set OPENAI_API_KEY, ANTHROPIC_API_KEY or OLLAMA_MODEL for a real model)"
+		return spec.Model{Instance: scripted}, "scripted (set OLLAMA_MODEL, OPENAI_API_KEY or ANTHROPIC_API_KEY for a real model)"
 	}
 }
 

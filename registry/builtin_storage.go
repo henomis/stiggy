@@ -26,7 +26,6 @@ import (
 	embeddingopenai "github.com/henomis/phero/v2/embedding/openai"
 	"github.com/henomis/phero/v2/llm"
 	"github.com/henomis/phero/v2/memory"
-	jsonfilememory "github.com/henomis/phero/v2/memory/jsonfile"
 	natsmemory "github.com/henomis/phero/v2/memory/nats"
 	psqlmemory "github.com/henomis/phero/v2/memory/psql"
 	simplememory "github.com/henomis/phero/v2/memory/simple"
@@ -57,10 +56,6 @@ type simpleMemoryOptions struct {
 	MaxItems uint `json:"max_items"`
 }
 
-type jsonfileMemoryOptions struct {
-	Dir string `json:"dir"`
-}
-
 type natsMemoryOptions struct {
 	Bucket string `json:"bucket"`
 }
@@ -85,11 +80,10 @@ func summarized[O any](env MemoryEnv, m spec.Memory, with func(l llm.LLM, thresh
 
 func builtinMemoryTypes() map[string]MemoryType {
 	return map[string]MemoryType{
-		"simple":   NewMemoryType(newSimpleMemory),
-		"jsonfile": NewMemoryType(newJSONFileMemory),
-		"nats":     NewMemoryType(newNATSMemory),
-		namePsql:   NewMemoryType(newPsqlMemory),
-		"rag":      NewMemoryType(newRAGMemory),
+		"simple": NewMemoryType(newSimpleMemory),
+		"nats":   NewMemoryType(newNATSMemory),
+		namePsql: NewMemoryType(newPsqlMemory),
+		"rag":    NewMemoryType(newRAGMemory),
 	}
 }
 
@@ -105,20 +99,6 @@ func newSimpleMemory(_ context.Context, o simpleMemoryOptions, m spec.Memory, en
 	}
 
 	return simplememory.New(n, opts...), nil
-}
-
-func newJSONFileMemory(_ context.Context, o jsonfileMemoryOptions, m spec.Memory, env MemoryEnv,
-) (memory.Memory, error) {
-	if o.Dir == "" {
-		return nil, fmt.Errorf("%w: jsonfile memory needs dir", ErrOptions)
-	}
-
-	opts, err := summarized(env, m, jsonfilememory.WithSummarization)
-	if err != nil {
-		return nil, err
-	}
-
-	return jsonfilememory.New(sessionFile(o.Dir, env.Session), opts...)
 }
 
 func newNATSMemory(_ context.Context, o natsMemoryOptions, m spec.Memory, env MemoryEnv) (memory.Memory, error) {

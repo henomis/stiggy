@@ -120,7 +120,8 @@ type Schedule struct {
 
 // Compile validates f against cat and builds its plan. It reports every
 // problem it finds, each as a [*spec.Error], joined with errors.Join; all of
-// them match [spec.ErrInvalid].
+// them match [spec.ErrInvalid]. Crews and patterns are the exception: each
+// expands until its first problem and reports only that one.
 // f is not modified.
 func Compile(f *spec.Fleet, cat Catalog) (*Plan, error) {
 	c := &compiler{cat: cat, kinds: map[string]Worker{}, origins: map[string]origin{}}
@@ -200,8 +201,13 @@ func (c *compiler) models() {
 			c.errorf(path+".retries", "must not be negative")
 		}
 
-		if r := m.RateLimit; r != nil && (r.RequestsPerMinute <= 0 || r.MaxConcurrent < 0) {
-			c.errorf(path+".rate_limit", "requests_per_minute must be positive and max_concurrent not negative")
+		if r := m.RateLimit; r != nil {
+			switch {
+			case r.RequestsPerMinute < 0 || r.MaxConcurrent < 0:
+				c.errorf(path+".rate_limit", "requests_per_minute and max_concurrent must not be negative")
+			case r.RequestsPerMinute == 0 && r.MaxConcurrent == 0:
+				c.errorf(path+".rate_limit", "set requests_per_minute, max_concurrent or both")
+			}
 		}
 	}
 }

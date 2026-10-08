@@ -16,7 +16,9 @@ package stiggy_test
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -280,4 +282,183 @@ patterns:
 	if got := textOutput(t, st); got != "Writer answered" {
 		t.Fatalf("swarm: output %q, visits %v", got, st.Visits)
 	}
+}
+
+// TestPatternPromptSeesReports checks that the agent in charge of a
+// supervisor or swarm with a custom prompt sees the output of the agent that
+// handed back to it, not the prompt alone.
+func TestPatternPromptSeesReports(t *testing.T) {
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		role := roleOf(r.System)
+
+		switch {
+		case len(r.ToolResults) > 0:
+			return stiggytest.Response{Text: role + " routed"}
+		case role == "Writer" && slices.Contains(r.Tools, "route_to_researcher"):
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "route_to_researcher", Args: map[string]any{}}}}
+		case role == "Writer":
+			return stiggytest.Response{Text: "Writer answered"}
+		case strings.Contains(r.Prompt, "Writer routed") || strings.Contains(r.Prompt, "Writer answered"):
+			return stiggytest.Response{Text: role + " done"}
+		default:
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "route_to_writer", Args: map[string]any{}}}}
+		}
+	})
+
+	h := startYAML(t, crewAgents+`
+patterns:
+  team: {type: supervisor, supervisor: boss, workers: [researcher, writer], prompt: "Handle {{.input.q}}", max_steps: 6}
+  swarm: {type: swarm, agents: [researcher, writer], prompt: "Handle {{.input.q}}", max_steps: 6}
+`, map[string]llm.LLM{"m": model})
+
+	st := h.Run(t, "team", map[string]any{"q": 1})
+	completed(t, st)
+
+	if got := textOutput(t, st); got != "Manager done" {
+		t.Fatalf("team: output %q, visits %v", got, st.Visits)
+	}
+
+	st = h.Run(t, "swarm", map[string]any{"q": 1})
+	completed(t, st)
+
+	if got := textOutput(t, st); got != "Researcher done" {
+		t.Fatalf("swarm: output %q, visits %v", got, st.Visits)
+	}
+}
+
+// TestPatternStepsSeeCustomPrompt checks every step that refers to the task
+// sees a pattern's custom prompt, rendered, rather than only the input: the
+// evaluator judges against its rules, plan_execute's executor and
+// synthesizer work on it, and a debate's debaters and judge argue it.
+func TestPatternStepsSeeCustomPrompt(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen = map[string][]string{} // role → prompts
+	)
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		role := roleOf(r.System)
+
+		mu.Lock()
+
+		seen[role] = append(seen[role], r.Prompt)
+		mu.Unlock()
+
+		switch role {
+		case "Editor":
+			return stiggytest.Response{Text: `{"pass": true, "feedback": ""}`}
+		case "Manager":
+			return stiggytest.Response{Text: `{"steps": ["one"]}`}
+		default:
+			return stiggytest.Response{Text: role + " done"}
+		}
+	})
+
+	h := startYAML(t, crewAgents+`
+patterns:
+  polish: {type: evaluator_optimizer, generator: writer, evaluator: editor, prompt: "Write about {{.input.topic}}. Rule: RULE-42."}
+  project: {type: plan_execute, planner: boss, executor: researcher, synthesizer: writer, prompt: "Ship {{.input.topic}}. Rule: RULE-43."}
+  argue: {type: debate, debaters: [researcher, boss], judge: editor, rounds: 1, prompt: "Debate {{.input.topic}}. Rule: RULE-44."}
+`, map[string]llm.LLM{"m": model})
+
+	completed(t, h.Run(t, "polish", map[string]any{"topic": "nats"}))
+	completed(t, h.Run(t, "project", map[string]any{"topic": "nats"}))
+	completed(t, h.Run(t, "argue", map[string]any{"topic": "nats"}))
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for role, want := range map[string][]string{
+		"Editor":     {"Write about nats. Rule: RULE-42.", "Debate nats. Rule: RULE-44."},
+		"Researcher": {"Ship nats. Rule: RULE-43.", "Debate nats. Rule: RULE-44."},
+		"Writer":     {"Write about nats. Rule: RULE-42.", "Ship nats. Rule: RULE-43."},
+		"Manager":    {"Debate nats. Rule: RULE-44."},
+	} {
+		all := strings.Join(seen[role], "\n---\n")
+		for _, w := range want {
+			if !strings.Contains(all, w) {
+				t.Errorf("%s never saw %q; prompts:\n%s", role, w, all)
+			}
+		}
+	}
+}
+
+// emptyOnce returns a model whose first call by role answers empty, as real
+// models now and then do; every other call answers with the role's name, and
+// the Editor passes what it judges.
+func emptyOnce(role string) llm.LLM {
+	var calls atomic.Int64
+
+	return stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		got := roleOf(r.System)
+
+		switch {
+		case got == role && calls.Add(1) == 1:
+			return stiggytest.Response{}
+		case got == "Editor":
+			return stiggytest.Response{Text: `{"pass": true, "valid": true, "feedback": ""}`}
+		default:
+			return stiggytest.Response{Text: got + " done"}
+		}
+	})
+}
+
+// TestPatternAndCrewRetry checks a crew's or pattern's retry reaches the
+// steps it generates: an empty answer, which is retryable, is asked again,
+// and without a retry it fails the execution.
+func TestPatternAndCrewRetry(t *testing.T) {
+	t.Run("pattern retry", func(t *testing.T) {
+		h := startYAML(t, crewAgents+`
+patterns:
+  polish: {type: evaluator_optimizer, generator: writer, evaluator: editor, retry: {max_attempts: 2, delay: 10ms}}
+`, map[string]llm.LLM{"m": emptyOnce("Writer")})
+
+		st := h.Run(t, "polish", map[string]any{"task": "x"})
+		completed(t, st)
+
+		if got := textOutput(t, st); got != "Writer done" {
+			t.Fatalf("output %q", got)
+		}
+	})
+
+	t.Run("no retry", func(t *testing.T) {
+		h := startYAML(t, crewAgents+`
+patterns:
+  polish: {type: evaluator_optimizer, generator: writer, evaluator: editor}
+`, map[string]llm.LLM{"m": emptyOnce("Writer")})
+
+		st := h.Run(t, "polish", map[string]any{"task": "x"})
+		if st.Status != packtrail.StatusFailed || !strings.Contains(st.Error, "empty") {
+			t.Fatalf("status %s: %s", st.Status, st.Error)
+		}
+	})
+
+	t.Run("crew retry reaches the guardrail", func(t *testing.T) {
+		h := startYAML(t, crewAgents+`
+crews:
+  launch:
+    retry: {max_attempts: 2, delay: 10ms}
+    tasks:
+      - {id: draft, agent: writer, description: Write., guardrail: {agent: editor}}
+`, map[string]llm.LLM{"m": emptyOnce("Editor")})
+
+		completed(t, h.Run(t, "launch", map[string]any{}))
+	})
+
+	t.Run("task retry", func(t *testing.T) {
+		h := startYAML(t, crewAgents+`
+crews:
+  launch:
+    tasks:
+      - {id: facts, agent: researcher, description: Research.}
+      - {id: draft, agent: writer, description: Write., retry: {max_attempts: 2, delay: 10ms}}
+`, map[string]llm.LLM{"m": emptyOnce("Writer")})
+
+		st := h.Run(t, "launch", map[string]any{})
+		completed(t, st)
+
+		if got := textOutput(t, st); got != "Writer done" {
+			t.Fatalf("output %q", got)
+		}
+	})
 }

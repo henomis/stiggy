@@ -174,7 +174,7 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, worker.WithUsage(classify(err), usage)
 	}
 
-	output, err := parseOutput(res.TextContent(), schema)
+	output, err := answerOutput(res.TextContent(), schema, ctl.route() != "")
 	if err != nil {
 		return nil, worker.WithUsage(err, usage)
 	}

@@ -108,7 +108,7 @@ func (rm Remote) handle(ctx context.Context, job *worker.Job, flows *flowCache) 
 		return nil, worker.WithUsage(err, usage)
 	}
 
-	output, err := parseOutput(text, schema)
+	output, err := answerOutput(text, schema, false)
 	if err != nil {
 		return nil, worker.WithUsage(err, usage)
 	}

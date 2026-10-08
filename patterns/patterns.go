@@ -37,6 +37,10 @@ import (
 
 // Expand returns the flow of a pattern.
 func Expand(name string, p spec.Pattern) (*flow.Flow, error) {
+	if err := checkRetry("retry", p.Retry); err != nil {
+		return nil, err
+	}
+
 	switch p.Type {
 	case spec.PatternSupervisor:
 		return Supervisor(name, p)
@@ -64,10 +68,12 @@ func perr(path, format string, args ...any) error {
 type builder struct {
 	f   *flow.Flow
 	err error
+	// retry is given to every stiggy step that has no retry of its own.
+	retry *flow.Retry
 }
 
-func newBuilder(name string, maxSteps int, budget map[string]float64) *builder {
-	return &builder{f: &flow.Flow{Name: name, MaxSteps: maxSteps, Budget: budget}}
+func newBuilder(name string, maxSteps int, budget map[string]float64, retry *flow.Retry) *builder {
+	return &builder{f: &flow.Flow{Name: name, MaxSteps: maxSteps, Budget: budget}, retry: retry}
 }
 
 // agent adds an agent step and returns it for further settings.
@@ -92,7 +98,48 @@ func (b *builder) done(start string) (*flow.Flow, error) {
 
 	b.f.Start = start
 
+	// Agent and remote steps (tasks and maps) get the retry; choices,
+	// fan-outs and joins run no step and have nothing to retry.
+	for i := range b.f.Nodes {
+		if n := &b.f.Nodes[i]; b.retry != nil && n.Retry == nil && spec.IsStiggyKind(n.Kind) {
+			n.Retry = cloneRetry(b.retry)
+		}
+	}
+
 	return b.f, nil
+}
+
+// cloneRetry copies a retry policy, so generated nodes share nothing.
+func cloneRetry(r *flow.Retry) *flow.Retry {
+	if r == nil {
+		return nil
+	}
+
+	c := *r
+
+	return &c
+}
+
+// checkRetry validates a retry policy with packtrail's own rules, on a probe
+// node, and reports its first problem at path.
+func checkRetry(path string, r *flow.Retry) error {
+	if r == nil {
+		return nil
+	}
+
+	const probeName = "probe"
+
+	probe := &flow.Flow{Name: probeName, Nodes: []flow.Node{
+		{ID: probeName, Type: flow.NodeTask, Kind: probeName, Retry: r},
+	}}
+
+	for _, ve := range flow.ValidationErrors(probe.Validate()) {
+		if field, ok := strings.CutPrefix(ve.Field, "retry"); ok {
+			return perr(path+field, "%s", ve.Msg)
+		}
+	}
+
+	return nil
 }
 
 // resultOf is the output expression returning a node's latest result.

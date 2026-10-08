@@ -51,7 +51,6 @@ func TestBuiltinMemories(t *testing.T) {
 
 	for _, m := range []spec.Memory{
 		{Type: "simple", Options: map[string]any{"max_items": 10}, Summarize: sum},
-		{Type: "jsonfile", Options: map[string]any{"dir": t.TempDir()}},
 		{Type: "nats", Options: map[string]any{"bucket": "stiggy-test-mem"}, Summarize: sum},
 	} {
 		if err := r.ValidateMemory(m); err != nil {
@@ -80,7 +79,6 @@ func TestMemoryOptionErrors(t *testing.T) {
 
 	for _, m := range []spec.Memory{
 		{Type: "simple", Options: map[string]any{"max_itms": 1}},
-		{Type: "jsonfile"},
 		{Type: "nats"},
 		{Type: "psql"},
 		{Type: "rag"},

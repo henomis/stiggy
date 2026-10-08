@@ -57,6 +57,10 @@ type assembly struct {
 	env   registry.Env
 	sql   *registry.SQLPool
 
+	// kmu serializes knowledge builds. They run without mu, as a vector
+	// store may register its cleanup (Env.Defer), which takes mu.
+	kmu sync.Mutex
+
 	mu       sync.Mutex
 	models   map[string]llm.LLM
 	tools    map[string][]*llm.Tool
@@ -133,6 +137,27 @@ func (s *assembly) model(name string) (llm.LLM, error) {
 // needs a positive concurrency.
 const unboundedConcurrency = 1 << 16
 
+// concurrencyLimit bounds the calls in flight, without bounding their rate.
+// phero's limiter always bounds the rate, refilling its bucket on a ticker,
+// so "no rate" cannot be expressed as a very high one.
+func concurrencyLimit(n int) llm.Middleware {
+	slots := make(chan struct{}, n)
+
+	return func(next llm.LLM) llm.LLM {
+		return llm.Func(func(ctx context.Context, msgs []llm.Message, opts ...llm.CallOption) (*llm.Result, error) {
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+
+			defer func() { <-slots }()
+
+			return next.Execute(ctx, msgs, opts...)
+		})
+	}
+}
+
 // secondsPerMinute converts requests per minute to the limiter's rate.
 const secondsPerMinute = 60
 
@@ -141,7 +166,9 @@ const secondsPerMinute = 60
 func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM, error) {
 	var mws []llm.Middleware
 
-	if r := m.RateLimit; r != nil {
+	switch r := m.RateLimit; {
+	case r == nil:
+	case r.RequestsPerMinute > 0:
 		conc := r.MaxConcurrent
 		if conc == 0 {
 			conc = unboundedConcurrency
@@ -154,6 +181,8 @@ func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM
 
 		s.cleanups = append(s.cleanups, func() error { stop(); return nil })
 		mws = append(mws, mw)
+	case r.MaxConcurrent > 0:
+		mws = append(mws, concurrencyLimit(r.MaxConcurrent))
 	}
 
 	if m.Retries > 0 {
@@ -195,10 +224,14 @@ func (s *assembly) tool(ctx context.Context, name string) ([]*llm.Tool, error) {
 }
 
 func (s *assembly) knowledge(ctx context.Context, name string) (*rag.RAG, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.kmu.Lock()
+	defer s.kmu.Unlock()
 
-	if r, ok := s.rags[name]; ok {
+	s.mu.Lock()
+	r, ok := s.rags[name]
+	s.mu.Unlock()
+
+	if ok {
 		return r, nil
 	}
 
@@ -209,14 +242,19 @@ func (s *assembly) knowledge(ctx context.Context, name string) (*rag.RAG, error)
 		return nil, err
 	}
 
+	s.mu.Lock()
 	store, ok := s.stores[k.VectorStore]
+	s.mu.Unlock()
+
 	if !ok {
 		store, err = s.reg.BuildVectorStore(ctx, k.VectorStore, s.fleet.VectorStores[k.VectorStore], s.env)
 		if err != nil {
 			return nil, err
 		}
 
+		s.mu.Lock()
 		s.stores[k.VectorStore] = store
+		s.mu.Unlock()
 	}
 
 	var opts []rag.Option
@@ -224,12 +262,14 @@ func (s *assembly) knowledge(ctx context.Context, name string) (*rag.RAG, error)
 		opts = append(opts, rag.WithTopK(k.TopK))
 	}
 
-	r, err := rag.New(store, emb, opts...)
+	r, err = rag.New(store, emb, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge %q: %w", name, err)
 	}
 
+	s.mu.Lock()
 	s.rags[name] = r
+	s.mu.Unlock()
 
 	return r, nil
 }
@@ -245,10 +285,15 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	}
 
 	out := agentrun.Agent{Name: name, Spec: as, LLM: l}
+	names := toolNames{agent: name, owners: map[string]string{}}
 
 	for _, t := range as.Tools {
 		ts, terr := s.tool(ctx, t)
 		if terr != nil {
+			return agentrun.Agent{}, terr
+		}
+
+		if terr = names.add(fmt.Sprintf("tool %q", t), ts...); terr != nil {
 			return agentrun.Agent{}, terr
 		}
 
@@ -261,27 +306,15 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 			return agentrun.Agent{}, kerr
 		}
 
+		if kerr = names.add(fmt.Sprintf("knowledge %q", k), t); kerr != nil {
+			return agentrun.Agent{}, kerr
+		}
+
 		out.Tools = append(out.Tools, t)
 	}
 
-	for _, d := range as.Delegates {
-		if rm, remote := s.fleet.Remotes[d]; remote {
-			t, rerr := s.remoteTool(d, rm)
-			if rerr != nil {
-				return agentrun.Agent{}, rerr
-			}
-
-			out.Tools = append(out.Tools, t)
-
-			continue
-		}
-
-		da, derr := s.agent(ctx, d)
-		if derr != nil {
-			return agentrun.Agent{}, derr
-		}
-
-		out.Delegates = append(out.Delegates, da)
+	if err = s.delegates(ctx, as, &out, names); err != nil {
+		return agentrun.Agent{}, err
 	}
 
 	if as.Memory.IsLongTerm() {
@@ -289,6 +322,73 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	}
 
 	return out, nil
+}
+
+// delegates adds an agent's delegates to out: remote ones as tools, agents
+// as delegate agents, which agentrun turns into ask_<name> tools.
+func (s *assembly) delegates(ctx context.Context, as spec.Agent, out *agentrun.Agent, names toolNames) error {
+	for _, d := range as.Delegates {
+		if rm, remote := s.fleet.Remotes[d]; remote {
+			t, rerr := s.remoteTool(d, rm)
+			if rerr != nil {
+				return rerr
+			}
+
+			if rerr = names.add(fmt.Sprintf("delegate %q", d), t); rerr != nil {
+				return rerr
+			}
+
+			out.Tools = append(out.Tools, t)
+
+			continue
+		}
+
+		// agentrun gives a delegate agent this tool name.
+		if err := names.claim(fmt.Sprintf("delegate %q", d), "ask_"+agent.SanitizeToolName(d)); err != nil {
+			return err
+		}
+
+		da, derr := s.agent(ctx, d)
+		if derr != nil {
+			return derr
+		}
+
+		out.Delegates = append(out.Delegates, da)
+	}
+
+	return nil
+}
+
+// toolNames checks an agent's tool names are distinct when the app starts:
+// phero would only reject a duplicate on the agent's first step. Names are
+// what the model sees, not the keys of the fleet's tools, so two entries of
+// one type (two file_read tools, say) both provide "read".
+type toolNames struct {
+	agent  string
+	owners map[string]string // tool name → the source that provides it
+}
+
+// add claims the names of tools for source.
+func (n toolNames) add(source string, tools ...*llm.Tool) error {
+	for _, t := range tools {
+		if err := n.claim(source, t.Name()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// claim records that source provides the tool name.
+func (n toolNames) claim(source, name string) error {
+	if first, taken := n.owners[name]; taken {
+		return fmt.Errorf("%w: agent %q: %s and %s both provide %q",
+			ErrToolClash, n.agent, first, source, name)
+	}
+
+	n.owners[name] = source
+
+	return nil
 }
 
 // agentResolver returns the fleet's resolver of protocol agents, creating it

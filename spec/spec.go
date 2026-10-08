@@ -24,6 +24,8 @@
 package spec
 
 import (
+	"fmt"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/henomis/packtrail/flow"
@@ -97,10 +99,12 @@ type Model struct {
 	RateLimit *RateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 }
 
-// RateLimit bounds the calls to a model.
+// RateLimit bounds the calls to a model: their rate, their concurrency, or
+// both. At least one must be set.
 type RateLimit struct {
-	RequestsPerMinute float64 `yaml:"requests_per_minute" json:"requests_per_minute"`
-	// MaxConcurrent bounds calls in flight; 0 means no bound beyond the rate.
+	// RequestsPerMinute bounds the call rate; 0 means no rate bound.
+	RequestsPerMinute float64 `yaml:"requests_per_minute,omitempty" json:"requests_per_minute,omitempty"`
+	// MaxConcurrent bounds calls in flight; 0 means no concurrency bound.
 	MaxConcurrent int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
 }
 
@@ -150,8 +154,9 @@ type Agent struct {
 	Delegates []string `yaml:"delegates,omitempty" json:"delegates,omitempty"`
 }
 
-// Memory types. Besides these, every memory backend of phero is a type:
-// simple, jsonfile, nats, psql and rag (see package registry).
+// Memory types. Besides these, phero's memory backends simple, nats, psql
+// and rag are types (see package registry). phero's jsonfile is left out: it
+// is meant for tests, and two instances of one file overwrite each other.
 const (
 	// MemoryNone disables conversation memory: every step starts fresh.
 	MemoryNone = "none"
@@ -266,6 +271,24 @@ func (m *Memory) UnmarshalYAML(value *yaml.Node) error {
 	type plain Memory
 
 	return value.Decode((*plain)(m))
+}
+
+// UnmarshalYAML rejects unknown keys: Memory's custom decoding runs a fresh
+// decoder, which does not inherit the loader's strictness.
+func (s *Summarize) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			switch k := value.Content[i]; k.Value {
+			case "model", "threshold", "size":
+			default:
+				return fmt.Errorf("line %d: field %s not found in type spec.Summarize", k.Line, k.Value)
+			}
+		}
+	}
+
+	type plain Summarize
+
+	return value.Decode((*plain)(s))
 }
 
 // Remote is an agent served by someone else on the NATS Agent Protocol.

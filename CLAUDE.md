@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 stiggy deploys multi-agent architectures on NATS by gluing two libraries:
 
 - **phero** (`github.com/henomis/phero/v2`, released v2.0.0): agents, LLMs, tools, memory, the NATS Agent Protocol.
-- **packtrail** (`github.com/henomis/packtrail`, released v1.0.0): durable, event-sourced workflow engine on JetStream.
+- **packtrail** (`github.com/henomis/packtrail`, v1.0.1-rc.1): durable, event-sourced workflow engine on JetStream.
 
 A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both produce the same model. Flows are packtrail flows plus a few agent fields (`agent`, `activity`, `prompt`, `writes`, `routes`); agents run in-process inside packtrail workers. The goal is durable crews, supervisors, swarms, human review and replay on NATS. The implementation plan (milestones M0–M7) lives at `~/.claude/plans/you-have-phero-as-composed-treehouse.md`.
 
@@ -17,7 +17,7 @@ A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both 
 |---|---|
 | `spec/` | The fleet model (`Fleet`, `Model`, `Tool`, `Agent`, `Step`), `ApplyStep` (step → node kind, dynamic edges, `meta.stiggy`), path-located `Error` |
 | `config/` | YAML loader: strict decoding, `${ENV}` expansion (never inside `flows`), step desugaring, `Source` maps error paths to lines |
-| `compile/` | Pure `Compile(fleet, catalog) → Plan`; reports every problem; golden tests in `testdata/` (`go test ./compile -update`) |
+| `compile/` | Pure `Compile(fleet, catalog) → Plan`; reports every problem (crews and patterns: only their first each, accepted); golden tests in `testdata/` (`go test ./compile -update`) |
 | `registry/` | Name → constructor for LLM providers, tool types (incl. MCP), memory backends, embedders, vector stores and activities, all with strict options; implements `compile.Catalog` |
 | `agentrun/` | Worker handler running a fresh phero agent per job: prompt, steering tools (`route_to_*`, `ask_human`), structured output, human-in-the-loop via interrupt payloads, execution memory (`_mem_<agent>` channels), long-term memory sessions, delegates, streaming, usage on every outcome |
 | `stiggy.go`, `options.go` | `App`: `New` (validate + compile, no I/O), `Run` (engine, then workers; drain workers before the engine), roles |
@@ -25,6 +25,7 @@ A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both 
 | `assembly.go` | Builds models, tools, knowledge (RAG), agents and memories once per `Run`; knowledge ingestion in the engine role; cleanups |
 | `patterns/` | Crews and patterns as macros: `Crew`, `Supervisor`, `Swarm`, `EvaluatorOptimizer`, `Debate`, `PlanExecute` → plain flows; `compile` expands `crews:`/`patterns:` and maps errors back to them |
 | `examples/` | Runnable examples (`run(ctx, nc, out)` + `example_test.go`); scripted models by default, real ones with `STIGGY_EXAMPLE_LIVE=1 OLLAMA_MODEL=gemma4:cloud` (`make examples-live`) |
+| `e2e/` | Live end-to-end scenarios (skipped unless `STIGGY_E2E=1`): real model through Ollama (`gemma4:cloud`), real Qdrant (`e2e/docker-compose.yaml`); they assert structure and planted facts, never exact wording |
 | `deploy/` | Dockerfile (build from the repo root), docker-compose, example fleet |
 | `stiggytest/` | Embedded NATS + app + fake LLMs (`Reply`, `Replies`, `Echo`) |
 | `internal/stepio/` | Step meta, job context as template data, `writes` extraction (shared by agents and activities) |
@@ -42,13 +43,14 @@ make guard   # only the no-direct-NATS architecture guard
 make lint    # golangci-lint (config copied from phero)
 make check   # test + examples + lint + vet
 make examples-live   # examples against a real model (gemma4:cloud via Ollama)
+make e2e             # live e2e scenarios: starts Qdrant (docker), runs ./e2e one test at a time; E2E_RUN=regexp
 ```
 
-Go 1.26.4 (the toolchain is fetched automatically). `go.mod` pins the released phero v2.0.0 and packtrail v1.0.0 (no `replace` directives).
+Go 1.26.4 (the toolchain is fetched automatically). `go.mod` pins the released phero v2.0.0 and packtrail v1.0.1-rc.1 (no `replace` directives).
 
 ## Rule 1: no direct NATS access
 
-NATS is the only transport, and stiggy's own state lives in NATS (packtrail). Agent storage the user configures may be any backend phero offers (memory: simple, jsonfile, nats, psql, rag; vector stores: qdrant, psql, weaviate). stiggy reaches NATS **only through the public Go APIs of phero and packtrail**.
+NATS is the only transport, and stiggy's own state lives in NATS (packtrail). Agent storage the user configures may be any backend phero offers (memory: simple, nats, psql, rag; vector stores: qdrant, psql, weaviate). stiggy reaches NATS **only through the public Go APIs of phero and packtrail**.
 
 stiggy code may:
 - dial NATS, but **only in `internal/natsconn`**;
