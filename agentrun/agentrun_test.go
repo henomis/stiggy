@@ -269,3 +269,29 @@ func TestSteeringTools(t *testing.T) {
 		t.Errorf("instructions = %q, want the handoff note explained", in)
 	}
 }
+
+func TestJobInfoChannels(t *testing.T) {
+	j := &worker.Job{ExecID: "e", Key: "n#1", Generation: 7, Context: worker.Context{Channels: map[string]json.RawMessage{
+		"timeline":              json.RawMessage(`[1,2]`),
+		spec.MemoryChannel("a"): json.RawMessage(`[{"role":"user"}]`),
+	}}}
+
+	info := jobInfo(j, "a")
+
+	if info.StepID != "e/n#1/7" {
+		t.Errorf("step id = %q", info.StepID)
+	}
+
+	var timeline []int
+	if err := info.DecodeChannel("timeline", &timeline); err != nil || len(timeline) != 2 {
+		t.Errorf("timeline = %v, %v", timeline, err)
+	}
+
+	if _, ok := info.Channels[spec.MemoryChannel("a")]; ok {
+		t.Error("a hidden memory channel reached the tools")
+	}
+
+	if _, ok := j.Context.Channels[spec.MemoryChannel("a")]; !ok {
+		t.Error("the job's own channels were changed")
+	}
+}

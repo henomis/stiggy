@@ -51,6 +51,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/henomis/packtrail"
+	"github.com/henomis/packtrail/event"
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/llm"
 
@@ -85,7 +87,9 @@ agents:
     goal: Explain how opinion moved during a social simulation, citing who said what.
 flows:
   simulate:
-    channels: {timeline: {reducer: append}}
+    # breaking is news injected from outside while the simulation runs:
+    # stiggy update <exec> -writes '{"breaking": "..."}', or a fork with writes.
+    channels: {timeline: {reducer: append}, breaking: {}}
     output: "{cast: results.cast.personas, timeline: channels.timeline, report: results.report.text}"
     nodes:
       - id: cast
@@ -114,7 +118,8 @@ flows:
         agent: persona
         prompt: |
           Round {{.visits.round}}. The news: {{.input.news}}
-          Read the feed, then post one message with the post tool: react to the news or reply to someone.
+          {{with .channels.breaking}}Breaking news: {{.}}
+          {{end}}Read the feed, then post one message with the post tool: react to the news or reply to someone.
         retry: {max_attempts: 3, delay: 1s}
         next: tick
       - id: tick
@@ -132,30 +137,36 @@ flows:
         agent: analyst
         prompt: |
           News: {{.input.news}}
-          Timeline of the simulation: {{json .channels.timeline}}
+          {{with .channels.breaking}}Breaking news during the simulation: {{.}}
+          {{end}}Timeline of the simulation: {{json .channels.timeline}}
           In three sentences: how did opinion move, and who moved it?
 `
 
-// post is one message of the timeline.
+// post is one message of the timeline: ID is its key in the store.
 type post struct {
+	ID     string `json:"id"`
 	Round  int    `json:"round,omitempty"`
 	Author string `json:"author"`
 	Text   string `json:"text"`
 }
 
-// stored is a post in the world.
+// stored is a post in the world; ID is its key, not stored.
 type stored struct {
+	ID     string    `json:"-"`
 	Author string    `json:"author"`
 	Text   string    `json:"text"`
 	At     time.Time `json:"at"`
 }
 
-// The world (the social network) lives in packtrail's long-term store,
-// shared by every worker: one namespace per execution, one key per post.
-// The key comes from the posting step (stiggy.Job.StepID), so a retried
-// step replaces its own post instead of adding one: delivery is at least
-// once, and a tool with side effects needs such a key. A real deployment
-// would also delete an execution's namespace once it ends.
+// The world (the social network) has two parts. Past rounds are the
+// execution's timeline channel, so a fork or a rerun sees its own history.
+// The current round lives in packtrail's long-term store, shared by every
+// worker: one namespace per execution, one key per post, until the tick
+// moves it into the timeline. The key comes from the posting step
+// (stiggy.Job.StepID), so a retried step replaces its own post instead of
+// adding one: delivery is at least once, and a tool with side effects needs
+// such a key. A real deployment would also delete an execution's namespace
+// once it ends.
 func feedNS(execID string) string { return "feed-" + execID }
 
 // postKey turns a step id into a store key (letters, digits, - and _).
@@ -180,7 +191,7 @@ func feed(ctx context.Context, store *worker.Store, execID string) ([]stored, er
 			return nil, gerr
 		}
 
-		var p stored
+		p := stored{ID: k}
 		if err = json.Unmarshal(raw, &p); err != nil {
 			return nil, err
 		}
@@ -191,6 +202,22 @@ func feed(ctx context.Context, store *worker.Store, execID string) ([]stored, er
 	slices.SortStableFunc(posts, func(a, b stored) int { return a.At.Compare(b.At) })
 
 	return posts, nil
+}
+
+// fresh returns the store's posts that the timeline does not hold yet: the
+// current round's.
+func fresh(ctx context.Context, store *worker.Store, execID string, timeline []post) ([]stored, error) {
+	posts, err := feed(ctx, store, execID)
+	if err != nil {
+		return nil, err
+	}
+
+	ticked := make(map[string]bool, len(timeline))
+	for _, p := range timeline {
+		ticked[p.ID] = true
+	}
+
+	return slices.DeleteFunc(posts, func(p stored) bool { return ticked[p.ID] }), nil
 }
 
 // errNoJob is returned by a world tool called outside a flow step.
@@ -220,18 +247,33 @@ func worldTools() ([]*llm.Tool, error) {
 				return "", err
 			}
 
-			posts, err := feed(ctx, job.Store, job.ExecID)
+			// Past rounds from the execution, this round from the store.
+			var timeline []post
+			if err = job.DecodeChannel("timeline", &timeline); err != nil && !errors.Is(err, stiggy.ErrNoJobValue) {
+				return "", err
+			}
+
+			current, err := fresh(ctx, job.Store, job.ExecID, timeline)
 			if err != nil {
 				return "", err
 			}
 
-			if len(posts) == 0 {
+			lines := make([]string, 0, len(timeline)+len(current))
+			for _, p := range timeline {
+				lines = append(lines, p.Author+": "+p.Text)
+			}
+
+			for _, p := range current {
+				lines = append(lines, p.Author+": "+p.Text)
+			}
+
+			if len(lines) == 0 {
 				return "The feed is empty: nobody has posted yet.", nil
 			}
 
 			var b strings.Builder
-			for _, p := range posts[max(0, len(posts)-20):] {
-				fmt.Fprintf(&b, "%s: %s\n", p.Author, p.Text)
+			for _, l := range lines[max(0, len(lines)-20):] {
+				b.WriteString(l + "\n")
 			}
 
 			return b.String(), nil
@@ -280,9 +322,9 @@ func worldTools() ([]*llm.Tool, error) {
 	return []*llm.Tool{readFeed, postTool}, nil
 }
 
-// tick copies the posts made since the last tick into the timeline,
-// stamped with their round. It counts what the timeline already holds, so a
-// retried tick returns the same posts.
+// tick moves the posts of the round into the timeline, stamped with the
+// round. It skips the posts the timeline already holds, so a retried tick
+// returns the same posts.
 func tick(ctx context.Context, job *worker.Job) (*worker.Result, error) {
 	var timeline []post
 	if raw := job.Context.Channels["timeline"]; len(raw) > 0 {
@@ -291,19 +333,19 @@ func tick(ctx context.Context, job *worker.Job) (*worker.Result, error) {
 		}
 	}
 
-	posts, err := feed(ctx, job.Store(), job.ExecID)
+	current, err := fresh(ctx, job.Store(), job.ExecID, timeline)
 	if err != nil {
 		return nil, err
 	}
 
 	round := job.Context.Visits["round"]
-	fresh := make([]post, 0, max(0, len(posts)-len(timeline)))
+	posts := make([]post, 0, len(current))
 
-	for _, p := range posts[min(len(timeline), len(posts)):] {
-		fresh = append(fresh, post{Round: round, Author: p.Author, Text: p.Text})
+	for _, p := range current {
+		posts = append(posts, post{ID: p.ID, Round: round, Author: p.Author, Text: p.Text})
 	}
 
-	return &worker.Result{Output: map[string]any{"posts": fresh}}, nil
+	return &worker.Result{Output: map[string]any{"posts": posts}}, nil
 }
 
 func main() {
@@ -352,6 +394,8 @@ func fake(r stiggytest.Request) stiggytest.Response {
 			{"name": "Ada", "bio": "A cyclist and nurse.", "stance": "for the ban"},
 			{"name": "Bo", "bio": "A taxi driver.", "stance": "against the ban"},
 			{"name": "Cy", "bio": "A shop owner downtown.", "stance": "undecided"}]}`}
+	case strings.Contains(r.System, "Role: Analyst") && strings.Contains(r.Prompt, "Breaking news"):
+		return stiggytest.Response{Text: "The sales study moved Bo and Cy towards the ban in round 2."}
 	case strings.Contains(r.System, "Role: Analyst"):
 		return stiggytest.Response{Text: "Ada and Bo held their ground; Cy moved towards Ada after round 1."}
 	case turns == 0:
@@ -366,8 +410,13 @@ func fake(r stiggytest.Request) stiggytest.Response {
 			round = m[1]
 		}
 
+		take := "take"
+		if strings.Contains(r.Prompt, "Breaking news") {
+			take = "take on the study"
+		}
+
 		return stiggytest.Response{Calls: []stiggytest.Call{{
-			Tool: "post", Args: map[string]any{"text": fmt.Sprintf("%s's take, round %s.", name, round)},
+			Tool: "post", Args: map[string]any{"text": fmt.Sprintf("%s's %s, round %s.", name, take, round)},
 		}}}
 	default:
 		return stiggytest.Response{Text: "Posted."}
@@ -409,19 +458,74 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		return err
 	}
 
+	if err = printRun(out, st, true); err != nil {
+		return err
+	}
+
+	// What if? Branch the simulation right after round 1, with breaking news
+	// written into the fork's state. The original is untouched; the fork
+	// replays nothing before the branch point and runs round 2 and the
+	// report again.
+	seq, err := afterNode(ctx, app.Client(), st.ExecID, "tick")
+	if err != nil {
+		return err
+	}
+
+	forkID, err := app.Client().Fork(ctx, st.ExecID, seq, packtrail.WithForkWrites(map[string]any{
+		"breaking": "A study finds car-free centres raised local shop sales by 20%.",
+	}))
+	if err != nil {
+		return err
+	}
+
+	fork, err := app.Client().Wait(ctx, forkID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "\nwhat if, after round 1: %s (fork %s: %s)\n", "breaking news", forkID, fork.Status)
+
+	if fork.Status != packtrail.StatusCompleted {
+		return fmt.Errorf("fork %s: %s %s", forkID, fork.Reason, fork.Error)
+	}
+
+	return printRun(out, fork, false)
+}
+
+// afterNode returns the sequence right after node first completed.
+func afterNode(ctx context.Context, c *packtrail.Client, execID, node string) (uint64, error) {
+	evs, err := c.History(ctx, execID)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, ev := range evs {
+		if d, ok := ev.Data.(*event.NodeDone); ok && ev.Type == event.NodeCompleted && d.Node == node {
+			return ev.Seq, nil
+		}
+	}
+
+	return 0, fmt.Errorf("socialsim: %s never completed in %s", node, execID)
+}
+
+// printRun prints a simulation's timeline and report, and its cast when
+// asked.
+func printRun(out io.Writer, st *packtrail.State, cast bool) error {
 	var res struct {
 		Cast     []struct{ Name, Stance string }
 		Timeline []post
 		Report   string
 	}
-	if err = st.DecodeOutput(&res); err != nil {
+	if err := st.DecodeOutput(&res); err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "cast:")
+	if cast {
+		fmt.Fprintln(out, "cast:")
 
-	for _, p := range res.Cast {
-		fmt.Fprintf(out, " - %s (%s)\n", p.Name, p.Stance)
+		for _, p := range res.Cast {
+			fmt.Fprintf(out, " - %s (%s)\n", p.Name, p.Stance)
+		}
 	}
 
 	fmt.Fprintf(out, "timeline (%d posts):\n", len(res.Timeline))

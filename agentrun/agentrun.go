@@ -21,8 +21,10 @@ package agentrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -194,8 +196,19 @@ func jobInfo(job *worker.Job, agentName string) jobctx.Job {
 		ExecID: job.ExecID, Flow: job.Flow, Node: job.Node, Agent: agentName,
 		StepID:  job.ExecID + "/" + job.Key + "/" + strconv.Itoa(job.Generation),
 		Attempt: job.Attempt, Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
-		Store: job.Store(),
+		Channels: visibleChannels(job.Context.Channels), Store: job.Store(),
 	}
+}
+
+// visibleChannels returns the channels a tool may read: all but the agents'
+// hidden memory channels.
+func visibleChannels(channels map[string]json.RawMessage) map[string]json.RawMessage {
+	out := maps.Clone(channels)
+	maps.DeleteFunc(out, func(name string, _ json.RawMessage) bool {
+		return strings.HasPrefix(name, spec.MemoryChannelPrefix)
+	})
+
+	return out
 }
 
 // stepPrompt returns the job context and the step's prompt, with the

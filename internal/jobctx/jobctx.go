@@ -51,6 +51,11 @@ type Job struct {
 	// JSON.
 	Input json.RawMessage
 	Item  json.RawMessage
+	// Channels are the flow's channels as the step sees them, as JSON. They
+	// are the execution's own state, so a fork or a rerun reads its own
+	// history. Agents' hidden memory channels are left out. Read only: a
+	// step writes channels through its output (writes), never here.
+	Channels map[string]json.RawMessage
 	// Store is packtrail's long-term key-value store of the fleet's
 	// namespace: data that outlives executions and is shared by every
 	// worker. Its writes are not part of the execution log, so a retried
@@ -63,6 +68,9 @@ func (j Job) DecodeInput(v any) error { return decode(j.Input, v) }
 
 // DecodeItem decodes the map item into v.
 func (j Job) DecodeItem(v any) error { return decode(j.Item, v) }
+
+// DecodeChannel decodes channel name into v.
+func (j Job) DecodeChannel(name string, v any) error { return decode(j.Channels[name], v) }
 
 func decode(raw json.RawMessage, v any) error {
 	if len(raw) == 0 {

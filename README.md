@@ -110,7 +110,7 @@ watch and stream progress from it.
 | [hitl](examples/hitl) | `ask_human` and human review, resumed with `Client.Resume` |
 | [crew](examples/crew) | A crew with a guardrail, also served as a protocol agent |
 | [remote](examples/remote) | Another team's phero agent as a step and as a delegate |
-| [socialsim](examples/socialsim) | A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (`JobFromContext`), rounds in a loop |
+| [socialsim](examples/socialsim) | A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (`JobFromContext`), rounds in a loop, and a what-if fork with breaking news |
 
 Each runs against `$NATS_URL`, with a real model when `OLLAMA_MODEL`,
 `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set (in that order), and a scripted

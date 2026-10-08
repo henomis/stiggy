@@ -29,6 +29,10 @@ func TestExample(t *testing.T) {
 			"[round 1] Bo: Bo's take, round 1.",
 			"[round 2] Cy: Cy's take, round 2.",
 			"report: Ada and Bo held their ground",
+			// The fork keeps round 1 and reruns round 2 with the news.
+			"what if, after round 1: breaking news",
+			"[round 2] Bo: Bo's take on the study, round 2.",
+			"report: The sales study moved Bo and Cy",
 		} {
 			if !strings.Contains(out, w) {
 				t.Fatalf("missing %q in output:\n%s", w, out)
