@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/henomis/packtrail/worker"
 )
 
 // ErrNoValue is returned when decoding a part of the job that is absent.
@@ -49,6 +51,11 @@ type Job struct {
 	// JSON.
 	Input json.RawMessage
 	Item  json.RawMessage
+	// Store is packtrail's long-term key-value store of the fleet's
+	// namespace: data that outlives executions and is shared by every
+	// worker. Its writes are not part of the execution log, so a retried
+	// step writes again: key them on StepID.
+	Store *worker.Store
 }
 
 // DecodeInput decodes the flow input into v.

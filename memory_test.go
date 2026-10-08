@@ -16,6 +16,7 @@ package stiggy_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -551,46 +552,6 @@ flows:
 	}
 }
 
-// TestEmptyAnswerIsNotReplayed checks a retried empty answer does not come
-// back from memory: OpenAI-compatible providers reject an assistant message
-// without content (a phero v2.0.0 issue).
-func TestEmptyAnswerIsNotReplayed(t *testing.T) {
-	var calls atomic.Int32
-
-	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
-		for _, m := range r.Messages {
-			if m.Role == llm.RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.TextContent()) == "" {
-				return stiggytest.Response{Text: "replayed an empty answer"}
-			}
-		}
-
-		if calls.Add(1) == 1 {
-			return stiggytest.Response{Text: ""}
-		}
-
-		return stiggytest.Response{Text: "ok"}
-	})
-
-	h := startYAML(t, `
-models: {m: {provider: x}}
-agents: {clerk: {model: m, memory: {type: simple, per_execution: true}}}
-flows:
-  note:
-    nodes:
-      - {id: note, type: task, agent: clerk, retry: {max_attempts: 2, delay: 10ms}}
-`, map[string]llm.LLM{"m": model})
-
-	st := h.Run(t, "note", map[string]any{})
-	if st.Status != packtrail.StatusCompleted {
-		t.Fatalf("status %s: %s", st.Status, st.Error)
-	}
-
-	var out struct{ Text string }
-	if err := st.DecodeOutput(&out); err != nil || out.Text != "ok" {
-		t.Fatalf("output = %q, %v", out.Text, err)
-	}
-}
-
 // TestStepID checks a tool's step id is stable across a retry of the step
 // and changes on the next visit of the node: the idempotency key of a tool
 // with side effects.
@@ -617,6 +578,12 @@ func TestStepID(t *testing.T) {
 		calls = append(calls, seen{job.StepID, job.Attempt})
 
 		mu.Unlock()
+
+		// One store key per step: a retry overwrites its own write.
+		key := fmt.Sprintf("%x", sha256.Sum256([]byte(job.StepID)))[:16]
+		if err := job.Store.Put(ctx, "steps-"+job.ExecID, key, job.Attempt); err != nil {
+			return "", err
+		}
 
 		return "recorded", nil
 	})
@@ -653,8 +620,15 @@ flows:
           - {default: true, to: $end}
 `, map[string]llm.LLM{"m": model}, stiggy.WithTool("rec", record))
 
-	if st := h.Run(t, "loop", map[string]any{}); st.Status != packtrail.StatusCompleted {
+	st := h.Run(t, "loop", map[string]any{})
+	if st.Status != packtrail.StatusCompleted {
 		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	// The retried visit and the second visit: two keys, three writes.
+	keys, err := h.Client.Store().Keys(ctxTimeout(t), "steps-"+st.ExecID)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("store keys = %v, %v; want one per step", keys, err)
 	}
 
 	mu.Lock()

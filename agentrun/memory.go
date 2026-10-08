@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/henomis/packtrail/worker"
@@ -96,62 +95,6 @@ func (m *chanMem) turn() []llm.Message {
 	defer m.mu.Unlock()
 
 	return slices.Clone(m.added)
-}
-
-// replayable keeps empty answers out of an agent's memory: an assistant
-// message with no content and no tool calls. phero saves one when a model
-// answers empty (a run stiggy then retries), and OpenAI-compatible providers
-// reject it once replayed (a phero v2.0.0 issue). It filters on Save
-// and on Retrieve, so sessions stored before still replay. Delete it once
-// phero no longer saves such messages.
-type replayable struct{ memory.Memory }
-
-// Save implements memory.Memory.
-func (m replayable) Save(ctx context.Context, messages []llm.Message) error {
-	if kept := withoutEmptyAnswers(messages); len(kept) > 0 {
-		return m.Memory.Save(ctx, kept)
-	}
-
-	return nil
-}
-
-// Retrieve implements memory.Memory.
-func (m replayable) Retrieve(ctx context.Context, query string) ([]llm.Message, error) {
-	messages, err := m.Memory.Retrieve(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-
-	return withoutEmptyAnswers(messages), nil
-}
-
-func withoutEmptyAnswers(messages []llm.Message) []llm.Message {
-	return slices.DeleteFunc(slices.Clone(messages), isEmptyAnswer)
-}
-
-// isEmptyAnswer reports whether m is an assistant message that carries
-// nothing a provider would send: no tool calls, and no part but blank text
-// or reasoning.
-func isEmptyAnswer(m llm.Message) bool {
-	if m.Role != llm.RoleAssistant || len(m.ToolCalls) > 0 {
-		return false
-	}
-
-	for _, p := range m.Parts {
-		switch p.Type {
-		case llm.ContentTypeText:
-			if strings.TrimSpace(p.Text) != "" {
-				return false
-			}
-		case llm.ContentTypeReasoning, llm.ContentTypeRedactedReasoning:
-		case llm.ContentTypeImageURL, llm.ContentTypeImageBase64:
-			return false
-		default:
-			return false
-		}
-	}
-
-	return true
 }
 
 // sessionCache keeps the long-term memories of a worker by session, so an
@@ -233,7 +176,7 @@ func (r *runner) memoryFor(ctx context.Context, job *worker.Job, data map[string
 			return nil, nil, err
 		}
 
-		return replayable{cm}, cm, nil
+		return cm, cm, nil
 	case m.IsLongTerm() && r.sessions != nil:
 		session, err := SessionOf(r.a.Name, m, data, job.ExecID)
 		if err != nil {
@@ -245,7 +188,7 @@ func (r *runner) memoryFor(ctx context.Context, job *worker.Job, data map[string
 			return nil, nil, fmt.Errorf("agentrun: memory: %w", err)
 		}
 
-		return replayable{mem}, nil, nil
+		return mem, nil, nil
 	default:
 		return nil, nil, nil
 	}

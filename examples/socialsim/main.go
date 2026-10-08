@@ -24,9 +24,10 @@
 //   - its own voice on the network: the world's post tool reads the caller
 //     from stiggy.JobFromContext, so a model cannot post as someone else.
 //
-// The network lives in this process (a real deployment keeps it in a store
-// the tools share). After each round a tick activity copies the new posts
-// into the timeline channel, so the execution's history holds every post.
+// The network lives in packtrail's long-term store, shared by every worker,
+// reached through stiggy.Job.Store. After each round a tick activity copies
+// the new posts into the timeline channel, so the execution's history holds
+// every post.
 //
 //	nats-server -js &
 //	go run ./examples/socialsim
@@ -34,6 +35,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,8 +45,9 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -109,7 +113,6 @@ flows:
         prompt: |
           Round {{.visits.round}}. The news: {{.input.news}}
           Read the feed, then post one message with the post tool: react to the news or reply to someone.
-          Finish by answering with the text you posted.
         retry: {max_attempts: 3, delay: 1s}
         next: tick
       - id: tick
@@ -131,19 +134,61 @@ flows:
           In three sentences: how did opinion move, and who moved it?
 `
 
-// post is one message on the network.
+// post is one message of the timeline.
 type post struct {
 	Round  int    `json:"round,omitempty"`
 	Author string `json:"author"`
 	Text   string `json:"text"`
-	// step is the step that posted it (stiggy.Job.StepID).
-	step string
 }
 
-// world is the social network: the posts of each execution, in order.
-type world struct {
-	mu    sync.Mutex
-	feeds map[string][]post
+// stored is a post in the world.
+type stored struct {
+	Author string    `json:"author"`
+	Text   string    `json:"text"`
+	At     time.Time `json:"at"`
+}
+
+// The world (the social network) lives in packtrail's long-term store,
+// shared by every worker: one namespace per execution, one key per post.
+// The key comes from the posting step (stiggy.Job.StepID), so a retried
+// step replaces its own post instead of adding one: delivery is at least
+// once, and a tool with side effects needs such a key. A real deployment
+// would also delete an execution's namespace once it ends.
+func feedNS(execID string) string { return "feed-" + execID }
+
+// postKey turns a step id into a store key (letters, digits, - and _).
+func postKey(stepID string) string {
+	sum := sha256.Sum256([]byte(stepID))
+
+	return hex.EncodeToString(sum[:12])
+}
+
+// feed returns an execution's posts, oldest first.
+func feed(ctx context.Context, store *worker.Store, execID string) ([]stored, error) {
+	keys, err := store.Keys(ctx, feedNS(execID))
+	if err != nil {
+		return nil, err
+	}
+
+	posts := make([]stored, 0, len(keys))
+
+	for _, k := range keys {
+		raw, gerr := store.Get(ctx, feedNS(execID), k)
+		if gerr != nil {
+			return nil, gerr
+		}
+
+		var p stored
+		if err = json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+
+		posts = append(posts, p)
+	}
+
+	slices.SortStableFunc(posts, func(a, b stored) int { return a.At.Compare(b.At) })
+
+	return posts, nil
 }
 
 // errNoJob is returned by a world tool called outside a flow step.
@@ -153,7 +198,7 @@ var errNoJob = errors.New("socialsim: the world's tools run only inside a flow s
 // job, never from the model's arguments.
 func author(ctx context.Context) (string, stiggy.Job, error) {
 	job, ok := stiggy.JobFromContext(ctx)
-	if !ok {
+	if !ok || job.Store == nil {
 		return "", job, errNoJob
 	}
 
@@ -165,7 +210,7 @@ func author(ctx context.Context) (string, stiggy.Job, error) {
 	return who.Name, job, nil
 }
 
-func (w *world) tools() ([]*llm.Tool, error) {
+func worldTools() ([]*llm.Tool, error) {
 	readFeed, err := llm.NewTool("read_feed", "Read the latest posts on the network.",
 		func(ctx context.Context, _ *struct{}) (string, error) {
 			_, job, err := author(ctx)
@@ -173,16 +218,17 @@ func (w *world) tools() ([]*llm.Tool, error) {
 				return "", err
 			}
 
-			w.mu.Lock()
-			defer w.mu.Unlock()
+			posts, err := feed(ctx, job.Store, job.ExecID)
+			if err != nil {
+				return "", err
+			}
 
-			feed := w.feeds[job.ExecID]
-			if len(feed) == 0 {
+			if len(posts) == 0 {
 				return "The feed is empty: nobody has posted yet.", nil
 			}
 
 			var b strings.Builder
-			for _, p := range feed[max(0, len(feed)-20):] {
+			for _, p := range posts[max(0, len(posts)-20):] {
 				fmt.Fprintf(&b, "%s: %s\n", p.Author, p.Text)
 			}
 
@@ -208,22 +254,20 @@ func (w *world) tools() ([]*llm.Tool, error) {
 				return "", errors.New("the post is empty")
 			}
 
-			w.mu.Lock()
-			defer w.mu.Unlock()
+			ns, key := feedNS(job.ExecID), postKey(job.StepID)
+			p := stored{Author: name, Text: text, At: time.Now()}
 
-			// One post per step: a retried step (or a model that posts
-			// twice) replaces its post instead of adding one. Delivery is at
-			// least once, so a tool with side effects needs such a key.
-			feed := w.feeds[job.ExecID]
-			for i := range feed {
-				if feed[i].step == job.StepID {
-					feed[i].Text = text
-
-					return "Posted (your earlier post this round was replaced).", nil
+			// A replaced post keeps its place in the feed.
+			if raw, gerr := job.Store.Get(ctx, ns, key); gerr == nil {
+				var old stored
+				if json.Unmarshal(raw, &old) == nil {
+					p.At = old.At
 				}
 			}
 
-			w.feeds[job.ExecID] = append(feed, post{Author: name, Text: text, step: job.StepID})
+			if err = job.Store.Put(ctx, ns, key, p); err != nil {
+				return "", err
+			}
 
 			return "Posted.", nil
 		})
@@ -237,7 +281,7 @@ func (w *world) tools() ([]*llm.Tool, error) {
 // tick copies the posts made since the last tick into the timeline,
 // stamped with their round. It counts what the timeline already holds, so a
 // retried tick returns the same posts.
-func (w *world) tick(_ context.Context, job *worker.Job) (*worker.Result, error) {
+func tick(ctx context.Context, job *worker.Job) (*worker.Result, error) {
 	var timeline []post
 	if raw := job.Context.Channels["timeline"]; len(raw) > 0 {
 		if err := json.Unmarshal(raw, &timeline); err != nil {
@@ -245,17 +289,17 @@ func (w *world) tick(_ context.Context, job *worker.Job) (*worker.Result, error)
 		}
 	}
 
-	round := job.Context.Visits["round"]
-
-	w.mu.Lock()
-	feed := w.feeds[job.ExecID]
-	fresh := make([]post, 0, max(0, len(feed)-len(timeline)))
-
-	for _, p := range feed[min(len(timeline), len(feed)):] {
-		p.Round = round
-		fresh = append(fresh, p)
+	posts, err := feed(ctx, job.Store(), job.ExecID)
+	if err != nil {
+		return nil, err
 	}
-	w.mu.Unlock()
+
+	round := job.Context.Visits["round"]
+	fresh := make([]post, 0, max(0, len(posts)-len(timeline)))
+
+	for _, p := range posts[min(len(timeline), len(posts)):] {
+		fresh = append(fresh, post{Round: round, Author: p.Author, Text: p.Text})
+	}
 
 	return &worker.Result{Output: map[string]any{"posts": fresh}}, nil
 }
@@ -334,9 +378,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		return fmt.Errorf("%s", strings.Join(src.Describe(err), "\n"))
 	}
 
-	w := &world{feeds: map[string][]post{}}
-
-	tools, err := w.tools()
+	tools, err := worldTools()
 	if err != nil {
 		return err
 	}
@@ -345,7 +387,7 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 	fmt.Fprintln(out, "model:", desc)
 
 	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model),
-		stiggy.WithTool("world", tools...), stiggy.WithActivity("tick", w.tick), stiggy.WithLogger(exutil.Quiet()))
+		stiggy.WithTool("world", tools...), stiggy.WithActivity("tick", tick), stiggy.WithLogger(exutil.Quiet()))
 	if err != nil {
 		return err
 	}

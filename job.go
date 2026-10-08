@@ -21,7 +21,8 @@ import (
 )
 
 // Job is the flow step an agent runs for: its execution, flow, node, agent,
-// attempt, and the flow input and map item. A Go tool reads it with
+// step id and attempt, the flow input and map item, and packtrail's
+// long-term store. A Go tool reads it with
 // [JobFromContext] to know who calls it, instead of trusting an argument the
 // model passes: a persona's "post" tool posts as that persona.
 type Job = jobctx.Job

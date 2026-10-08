@@ -194,6 +194,7 @@ func jobInfo(job *worker.Job, agentName string) jobctx.Job {
 		ExecID: job.ExecID, Flow: job.Flow, Node: job.Node, Agent: agentName,
 		StepID:  job.ExecID + "/" + job.Key + "/" + strconv.Itoa(job.Generation),
 		Attempt: job.Attempt, Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
+		Store: job.Store(),
 	}
 }
 
