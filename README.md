@@ -159,7 +159,7 @@ Protocol, and the evaluator and debate patterns. `make e2e` starts Qdrant with
 Docker (`make e2e-down` stops it) and needs Ollama with `nomic-embed-text` for
 embeddings; `E2E_RUN=TestName` runs one scenario.
 
-Requires Go 1.26.4. Depends on the released `phero/v2` v2.0.0 and `packtrail` v1.0.1-rc.1.
+Requires Go 1.26.4. Depends on the released `phero/v2` v2.0.0 and `packtrail` v1.0.1-rc.2.
 
 ## License
 

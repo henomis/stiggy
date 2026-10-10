@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 stiggy deploys multi-agent architectures on NATS by gluing two libraries:
 
 - **phero** (`github.com/henomis/phero/v2`, released v2.0.0): agents, LLMs, tools, memory, the NATS Agent Protocol.
-- **packtrail** (`github.com/henomis/packtrail`, v1.0.1-rc.1): durable, event-sourced workflow engine on JetStream.
+- **packtrail** (`github.com/henomis/packtrail`, v1.0.1-rc.2): durable, event-sourced workflow engine on JetStream.
 
 A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both produce the same model. Flows are packtrail flows plus a few agent fields (`agent`, `activity`, `prompt`, `writes`, `routes`); agents run in-process inside packtrail workers. The goal is durable crews, supervisors, swarms, human review and replay on NATS. The implementation plan (milestones M0–M7) lives at `~/.claude/plans/you-have-phero-as-composed-treehouse.md`.
 
@@ -47,7 +47,7 @@ make examples-live   # examples against a real model (llama3.2-eco via Ollama)
 make e2e             # live e2e scenarios: starts Qdrant (docker), runs ./e2e one test at a time; E2E_RUN=regexp
 ```
 
-Go 1.26.4 (the toolchain is fetched automatically). `go.mod` pins the released phero v2.0.0 and packtrail v1.0.1-rc.1 (no `replace` directives).
+Go 1.26.4 (the toolchain is fetched automatically). `go.mod` pins the released phero v2.0.0 and packtrail v1.0.1-rc.2 (no `replace` directives).
 
 ## Rule 1: no direct NATS access
 

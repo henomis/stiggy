@@ -173,6 +173,8 @@ type fileFlow struct {
 	MaxSteps         int                     `yaml:"max_steps,omitempty"`
 	SearchAttributes map[string]string       `yaml:"search_attributes,omitempty"`
 	Retention        flow.Duration           `yaml:"retention,omitempty"`
+	OnExpire         string                  `yaml:"on_expire,omitempty"`
+	ArchiveRetention flow.Duration           `yaml:"archive_retention,omitempty"`
 	Triggers         []flow.Trigger          `yaml:"triggers,omitempty"`
 }
 
@@ -206,6 +208,8 @@ func (ff *fileFlow) toFlow(name string) (*flow.Flow, []error) {
 		MaxSteps:         ff.MaxSteps,
 		SearchAttributes: ff.SearchAttributes,
 		Retention:        ff.Retention,
+		OnExpire:         ff.OnExpire,
+		ArchiveRetention: ff.ArchiveRetention,
 		Triggers:         ff.Triggers,
 	}
 

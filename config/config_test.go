@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/henomis/packtrail/flow"
 
@@ -58,6 +59,44 @@ func TestFileFlowMirrorsFlow(t *testing.T) {
 	want := tags(reflect.TypeFor[flow.Flow]())
 	if got := tags(reflect.TypeFor[fileFlow]()); !slices.Equal(got, want) {
 		t.Fatalf("fileFlow fields %v, flow.Flow fields %v", got, want)
+	}
+}
+
+// TestFlowExpiry: a flow's retention settings reach the packtrail flow.
+func TestFlowExpiry(t *testing.T) {
+	doc := `
+models:
+  m: {provider: ollama, model: x}
+agents:
+  a: {model: m}
+flows:
+  gone:
+    retention: 5h
+    on_expire: delete
+    nodes:
+      - {id: s, type: task, agent: a}
+  kept:
+    retention: 24h
+    archive_retention: 720h
+    nodes:
+      - {id: s, type: task, agent: a}
+`
+
+	fleet, _, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gone, kept := fleet.Flows["gone"], fleet.Flows["kept"]
+
+	if gone.Retention.D() != 5*time.Hour || !gone.DeletesOnExpire() || gone.ArchiveRetention != 0 {
+		t.Errorf("gone: retention %s, on_expire %q, archive_retention %s",
+			gone.Retention.D(), gone.OnExpire, gone.ArchiveRetention.D())
+	}
+
+	if kept.Retention.D() != 24*time.Hour || kept.DeletesOnExpire() || kept.ArchiveRetention.D() != 720*time.Hour {
+		t.Errorf("kept: retention %s, on_expire %q, archive_retention %s",
+			kept.Retention.D(), kept.OnExpire, kept.ArchiveRetention.D())
 	}
 }
 

@@ -95,8 +95,8 @@ github.com/google/jsonschema-go v0.4.2/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9
 github.com/google/uuid v1.1.1/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/henomis/packtrail v1.0.1-rc.1 h1:JJE52oPmyhxkXsoqQAC6bOo3sVqhpHS1hqpruIbwwJk=
-github.com/henomis/packtrail v1.0.1-rc.1/go.mod h1:eymIY9g3+cih4Cf+3X7xF+4Bvc4Qb54R7ZSm2KZ1mlw=
+github.com/henomis/packtrail v1.0.1-rc.2 h1:pN9yY+U3IleuVq/sBOAe1BLQppOStdJ3+nPpMNCiMEk=
+github.com/henomis/packtrail v1.0.1-rc.2/go.mod h1:eymIY9g3+cih4Cf+3X7xF+4Bvc4Qb54R7ZSm2KZ1mlw=
 github.com/henomis/phero/v2 v2.0.0 h1:ywtuVrIMvYdzLfkGiB3FFTHeFTa5ohpgNAnx58SJ62I=
 github.com/henomis/phero/v2 v2.0.0/go.mod h1:omeJy8Cf8Jr/vDzTrt/MWjxI3zId6FzXYwpC7fwuGYA=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
