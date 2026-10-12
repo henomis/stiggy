@@ -34,11 +34,15 @@ var sessionPattern = regexp.MustCompile(`^[A-Za-z0-9_=/-]+(\.[A-Za-z0-9_=/-]+)*$
 // SessionTemplate is a parsed [Memory.Session]. A session is a template
 // over the same job context as a step prompt (see [ParsePrompt]), so
 // "user-{{.input.user_id}}" gives every user a memory of their own. Unlike a
-// prompt, it fails closed: a missing key is an error, not an empty string,
-// so a session never silently collapses into one shared by everyone.
+// prompt, it fails closed: a missing key is an error, and so is an action
+// that renders nothing (an empty user id), so a session never silently
+// collapses into one shared by everyone.
 type SessionTemplate struct {
-	t      *template.Template
-	static bool
+	t *template.Template
+	// actions are the session's value actions, each as a template of its
+	// own, to tell one that renders nothing from the text around it.
+	actions []*template.Template
+	static  bool
 }
 
 // ParseSession parses a memory session. A session without actions is
@@ -54,6 +58,25 @@ func ParseSession(text string) (*SessionTemplate, error) {
 		if err = ValidSession(text); err != nil {
 			return nil, err
 		}
+
+		return s, nil
+	}
+
+	for _, n := range t.Root.Nodes {
+		// An action that only declares a variable renders nothing by design.
+		a, ok := n.(*parse.ActionNode)
+		if !ok || len(a.Pipe.Decl) > 0 {
+			continue
+		}
+
+		tree := &parse.Tree{Name: a.String(), Root: &parse.ListNode{NodeType: parse.NodeList, Nodes: []parse.Node{a}}}
+
+		at, aerr := template.New(tree.Name).Funcs(promptFuncs).Option("missingkey=error").AddParseTree(tree.Name, tree)
+		if aerr != nil {
+			return nil, fmt.Errorf("session: %w", aerr)
+		}
+
+		s.actions = append(s.actions, at)
 	}
 
 	return s, nil
@@ -73,6 +96,16 @@ func (s *SessionTemplate) Render(data map[string]any) (string, error) {
 	out := b.String()
 	if err := ValidSession(out); err != nil {
 		return "", err
+	}
+
+	for _, a := range s.actions {
+		var part strings.Builder
+
+		// An action that cannot run alone uses a variable declared before
+		// it; the whole session rendered, so it is left unchecked.
+		if err := a.Execute(&part, data); err == nil && part.Len() == 0 {
+			return "", fmt.Errorf("%w: %s renders nothing in %q", ErrSession, a.Name(), out)
+		}
 	}
 
 	return out, nil

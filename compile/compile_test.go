@@ -37,7 +37,7 @@ var catalog = compile.StaticCatalog{
 	Providers:         []string{"openai", "anthropic", "ollama"},
 	ToolTypes:         []string{"bash"},
 	Activities:        []string{"publish"},
-	MemoryTypes:       []string{"simple", "nats"},
+	MemoryTypes:       []string{"simple", "nats", "rag"},
 	EmbedderProviders: []string{"openai"},
 	VectorStoreTypes:  []string{"qdrant"},
 }
@@ -323,6 +323,25 @@ expose: {agents: [c]}
 				`4: agents.a.memory.session: session: template: session:1: unclosed action`,
 				`5: agents.b.memory.session: spec: a memory session must be`,
 				`6: agents.c.memory.session: an exposed agent has no job context`,
+			},
+		},
+		{
+			name: "rag memory has no sessions",
+			yaml: `
+models: {m: {provider: openai}}
+embedders: {e: {provider: openai}}
+vectorstores: {v: {type: qdrant}}
+knowledge: {k: {embedder: e, vectorstore: v}}
+agents:
+  a: {model: m, memory: {type: rag, knowledge: k, session: "user-{{.input.user}}"}}
+  b: {model: m, memory: {type: rag, knowledge: k, per_execution: true}}
+  c: {model: m, memory: {type: rag, knowledge: k}}
+flows:
+  f: {nodes: [{id: s, type: task, agent: c}]}
+`,
+			want: []string{
+				`7: agents.a.memory: a memory stored in knowledge is one collection shared by every job`,
+				`8: agents.b.memory: a memory stored in knowledge is one collection shared by every job`,
 			},
 		},
 		{

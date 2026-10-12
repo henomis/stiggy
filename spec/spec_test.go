@@ -171,6 +171,7 @@ func TestSessionTemplate(t *testing.T) {
 		{"team/eu.west", "team/eu.west", true},
 		{"user-{{.input.user}}", "user-ann", false},
 		{"persona-{{.item.id}}", "persona-7", false},
+		{`{{$u := .input.user}}user-{{$u}}`, "user-ann", false},
 	} {
 		s, err := spec.ParseSession(tc.text)
 		if err != nil {
@@ -194,7 +195,13 @@ func TestSessionTemplate(t *testing.T) {
 
 	// A templated session fails closed: a missing key or an unsafe value is
 	// an error, never an empty or shared session.
-	for _, text := range []string{"user-{{.input.missing}}", "{{.input.email}}", "u-{{.nothing.here}}"} {
+	data["input"].(map[string]any)["blank"] = ""
+	data["input"].(map[string]any)["null"] = nil
+
+	for _, text := range []string{
+		"user-{{.input.missing}}", "{{.input.email}}", "u-{{.nothing.here}}",
+		"user-{{.input.blank}}", "{{.input.user}}-{{.input.blank}}", "user-{{.input.null}}",
+	} {
 		s, err := spec.ParseSession(text)
 		if err != nil {
 			t.Fatalf("%q: %v", text, err)

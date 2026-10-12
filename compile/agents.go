@@ -240,6 +240,13 @@ func (c *compiler) memory(path string, m spec.Memory) {
 		if _, ok := c.fleet.Knowledge[m.Knowledge]; !ok {
 			c.errorf(path+".knowledge", "unknown knowledge %q", m.Knowledge)
 		}
+
+		// Accepting them would promise a memory per user or per execution
+		// while every job reads and writes the same collection.
+		if m.Session != "" || m.PerExecution {
+			c.errorf(path, "a memory stored in knowledge is one collection shared by every job: "+
+				"session and per_execution do not apply")
+		}
 	}
 
 	if v, ok := c.cat.(MemoryValidator); ok {
