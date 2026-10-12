@@ -188,17 +188,30 @@
       so nothing is hidden.
     </p>
 <pre><span class="c-cmd">$ stiggy compile</span> fleet.yaml
+<span class="c-com"># namespace: newsroom</span>
 <span class="c-com"># worker agent-researcher runs agent researcher</span>
 <span class="c-com"># worker agent-writer runs agent writer</span>
+---
 <span class="c-key">name</span>: article
 <span class="c-key">start</span>: research
+<span class="c-key">output</span>: results["write"]
 <span class="c-key">nodes</span>:
     - <span class="c-key">id</span>: research
       <span class="c-key">type</span>: task
-      <span class="c-key">kind</span>: agent-researcher
       <span class="c-key">next</span>: write
+      <span class="c-key">meta</span>:
+        <span class="c-key">stiggy</span>:
+            <span class="c-key">agent</span>: researcher
+            <span class="c-key">prompt</span>: Research {{.input.topic}}.
+      <span class="c-key">kind</span>: agent-researcher
     - <span class="c-key">id</span>: write
       <span class="c-key">type</span>: task
+      <span class="c-key">meta</span>:
+        <span class="c-key">stiggy</span>:
+            <span class="c-key">agent</span>: writer
+            <span class="c-key">context</span>:
+                - research
+            <span class="c-key">prompt</span>: Write a 200-word article from the research.
       <span class="c-key">kind</span>: agent-writer</pre>
   </div>
 </section>
@@ -287,7 +300,7 @@ st, _ := app.Client().<span class="c-key">Wait</span>(ctx, id)</pre>
   <div class="wrap">
     <h2><span class="num">06</span>Try it</h2>
     <p class="sub">
-      Six runnable examples ship in <code>examples/</code>, and they double as tests: scripted models by default,
+      Seven runnable examples ship in <code>examples/</code>, and they double as tests: scripted models by default,
       a real one with <code>make examples-live</code>. Requires Go 1.26.4 and a NATS server with JetStream.
     </p>
 <pre><span class="c-cmd">go install</span> github.com/henomis/stiggy/cmd/stiggy@latest

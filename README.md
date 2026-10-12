@@ -98,6 +98,9 @@ watch and stream progress from it.
 
 ## Documentation
 
+- [Reference](https://simonevellei.com/stiggy/docs.html): the fleet file,
+  flows, crews and patterns, the CLI and the Go library (source:
+  [web/docs.html](web/docs.html)).
 - [examples/](examples): runnable programs (below).
 
 ## Examples
@@ -144,7 +147,7 @@ or packtrail's CLI and `packtrail-ui` on the fleet's namespace.
 
 ```bash
 make test           # tests with -race
-make check          # test + lint + vet
+make check          # test + examples + lint + vet
 make examples       # the examples, scripted
 make examples-live  # the examples, against a real model
 make e2e            # end-to-end scenarios against a real model and Qdrant

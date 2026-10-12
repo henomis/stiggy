@@ -16,7 +16,7 @@ A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both 
 | Path | Role |
 |---|---|
 | `spec/` | The fleet model (`Fleet`, `Model`, `Tool`, `Agent`, `Step`), `ApplyStep` (step → node kind, dynamic edges, `meta.stiggy`), path-located `Error` |
-| `config/` | YAML loader: strict decoding, `${ENV}` expansion (never inside `flows`), step desugaring, `Source` maps error paths to lines |
+| `config/` | YAML loader: strict decoding, `${ENV}` expansion (never inside `flows`; a load error inside `crews` and `patterns`), step desugaring, `Source` maps error paths to lines |
 | `compile/` | Pure `Compile(fleet, catalog) → Plan`; reports every problem (crews and patterns: only their first each, accepted); golden tests in `testdata/` (`go test ./compile -update`) |
 | `registry/` | Name → constructor for LLM providers, tool types (incl. MCP), memory backends, embedders, vector stores and activities, all with strict options; implements `compile.Catalog` |
 | `agentrun/` | Worker handler running a fresh phero agent per job: prompt, steering tools (`route_to_*`, `ask_human`), structured output, human-in-the-loop via interrupt payloads, execution memory (`_mem_<agent>` channels), long-term memory sessions, delegates, streaming, usage on every outcome |
