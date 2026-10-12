@@ -25,7 +25,7 @@ A fleet is defined once, as YAML (`stiggy` binary) or in Go (library API); both 
 | `assembly.go` | Builds models, tools, knowledge (RAG), agents and memories once per `Run`; knowledge ingestion in the engine role; cleanups |
 | `patterns/` | Crews and patterns as macros: `Crew`, `Supervisor`, `Swarm`, `EvaluatorOptimizer`, `Debate`, `PlanExecute` → plain flows; `compile` expands `crews:`/`patterns:` and maps errors back to them |
 | `examples/` | Runnable examples (`run(ctx, nc, out)` + `example_test.go`); scripted models by default, real ones with `STIGGY_EXAMPLE_LIVE=1 OLLAMA_MODEL=llama3.2-eco` (`make examples-live`) |
-| `e2e/` | Live end-to-end scenarios (skipped unless `STIGGY_E2E=1`): real model through Ollama (`llama3.2-eco`), real Qdrant (`e2e/docker-compose.yaml`); they assert structure and planted facts, never exact wording |
+| `e2e/` | Live end-to-end scenarios (skipped unless `STIGGY_E2E=1`): real model through Ollama (`gemma4:cloud`), real Qdrant (`e2e/docker-compose.yaml`); they assert structure and planted facts, never exact wording |
 | `deploy/` | Dockerfile (build from the repo root), docker-compose, example fleet |
 | `stiggytest/` | Embedded NATS + app + fake LLMs (`Reply`, `Replies`, `Echo`) |
 | `internal/stepio/` | Step meta, job context as template data, `writes` extraction (shared by agents and activities) |

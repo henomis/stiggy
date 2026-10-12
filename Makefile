@@ -28,7 +28,7 @@ help:
 	@echo "  make check       - Run test + lint + vet"
 	@echo "  make examples    - Run the examples with their scripted models"
 	@echo "  make examples-live - Run the examples against a real model (OLLAMA_MODEL=llama3.2-eco by default)"
-	@echo "  make e2e         - Run the end-to-end tests against a real model and Qdrant (STIGGY_E2E_MODEL=llama3.2-eco by default; E2E_RUN=regexp)"
+	@echo "  make e2e         - Run the end-to-end tests against a real model and Qdrant (STIGGY_E2E_MODEL=gemma4:cloud by default; E2E_RUN=regexp)"
 	@echo "  make e2e-up      - Start the services the e2e tests need (Qdrant)"
 	@echo "  make e2e-down    - Stop them"
 	@echo "  make help        - Display this help message"
@@ -111,7 +111,7 @@ e2e-down:
 	$(E2E_COMPOSE) down
 
 ## e2e: Run the end-to-end tests against a real model through Ollama, one at a time
-STIGGY_E2E_MODEL ?= llama3.2-eco
+STIGGY_E2E_MODEL ?= gemma4:cloud
 E2E_RUN ?= .
 e2e: e2e-up
 	STIGGY_E2E=1 STIGGY_E2E_MODEL=$(STIGGY_E2E_MODEL) $(GO) test -count=1 -v -p 1 -timeout 60m -run '$(E2E_RUN)' ./e2e/

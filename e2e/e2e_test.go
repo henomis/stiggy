@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package e2e_test runs whole fleets against a real model: Ollama with
-// llama3.2-eco by default, an embedded JetStream server, and (for knowledge)
+// gemma4:cloud by default, an embedded JetStream server, and (for knowledge)
 // a real Qdrant. The tests are skipped unless STIGGY_E2E=1; run them with
 // make e2e, which starts Qdrant first.
 //
@@ -24,7 +24,7 @@
 //
 // Environment:
 //   - STIGGY_E2E=1 enables the tests;
-//   - STIGGY_E2E_MODEL (default llama3.2-eco);
+//   - STIGGY_E2E_MODEL (default gemma4:cloud);
 //   - STIGGY_E2E_OLLAMA_URL (default http://localhost:11434/v1);
 //   - STIGGY_E2E_EMBED_MODEL (default nomic-embed-text) and
 //     STIGGY_E2E_EMBED_SIZE (default 768);
@@ -60,7 +60,7 @@ const models = `
 models:
   main:
     provider: ollama
-    model: "${STIGGY_E2E_MODEL:-llama3.2-eco}"
+    model: "${STIGGY_E2E_MODEL:-gemma4:cloud}"
     base_url: "${STIGGY_E2E_OLLAMA_URL:-http://localhost:11434/v1}"
     temperature: 0.1
     retries: 5

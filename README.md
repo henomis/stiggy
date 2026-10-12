@@ -151,7 +151,7 @@ make e2e            # end-to-end scenarios against a real model and Qdrant
 ```
 
 [e2e/](e2e) runs whole fleets against a real model through Ollama
-(`llama3.2-eco` by default, `STIGGY_E2E_MODEL` to change it): map-reduce
+(`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce
 research, plan-and-execute across three processes, RAG on Qdrant, a
 supervisor with file tools, human review with fork, execution and long-term
 memory, cross-team remote agents and delegates, a crew over the NATS Agent
