@@ -158,3 +158,26 @@ func TestReadmeFleetValidates(t *testing.T) {
 		t.Fatalf("%v\n%s%s", verr, out, stderr)
 	}
 }
+
+func TestCompileNamesRemoteWorkers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fleet.yaml")
+
+	const fleet = `
+remotes: {reviewer: {owner: ops, name: reviewer}}
+flows:
+  f: {nodes: [{id: s, type: task, remote: reviewer}]}
+`
+
+	if err := os.WriteFile(path, []byte(fleet), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runCLI(t, "compile", "-no-env", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "# worker remote-reviewer runs remote agent reviewer\n"; !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}

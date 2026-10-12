@@ -65,6 +65,7 @@ func (c *compiler) expand(f *spec.Fleet) *spec.Fleet {
 			}
 
 			c.errs = append(c.errs, err)
+			c.failed[name] = true
 
 			return
 		}

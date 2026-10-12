@@ -196,8 +196,12 @@ func writeYAML(w io.Writer, plan *compile.Plan) error {
 
 	for _, wk := range plan.Workers {
 		target := "agent " + wk.Agent
-		if wk.Activity != "" {
+
+		switch {
+		case wk.Activity != "":
 			target = "activity " + wk.Activity
+		case wk.Remote != "":
+			target = "remote agent " + wk.Remote
 		}
 
 		_, _ = fmt.Fprintf(&buf, "# worker %s runs %s\n", wk.Kind, target)

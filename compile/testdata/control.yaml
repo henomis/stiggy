@@ -55,6 +55,7 @@ flows:
         context: [plan, research]
         expected_output: A verdict and the reason for it.
         human_input: true
+        output_schema: {type: object, properties: {verdict: {type: string}}, required: [verdict]}
         writes: {verdict: output.verdict}
         routes: [plan, publish, human]
         next: publish

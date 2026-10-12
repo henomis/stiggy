@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -84,12 +85,17 @@ func (e *expander) walk(v reflect.Value, path string) {
 			e.walk(v.Index(i), join(path, strconv.Itoa(i)))
 		}
 	case reflect.Map:
-		iter := v.MapRange()
-		for iter.Next() {
+		// Sorted, so errors come out in the same order on every run.
+		keys := v.MapKeys()
+		slices.SortFunc(keys, func(a, b reflect.Value) int {
+			return strings.Compare(fmt.Sprint(a.Interface()), fmt.Sprint(b.Interface()))
+		})
+
+		for _, k := range keys {
 			elem := reflect.New(v.Type().Elem()).Elem()
-			elem.Set(iter.Value())
-			e.walk(elem, join(path, fmt.Sprint(iter.Key().Interface())))
-			v.SetMapIndex(iter.Key(), elem)
+			elem.Set(v.MapIndex(k))
+			e.walk(elem, join(path, fmt.Sprint(k.Interface())))
+			v.SetMapIndex(k, elem)
 		}
 	case reflect.Interface:
 		if v.IsNil() {

@@ -338,7 +338,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <p>Templates see <code>.input</code>, <code>.channels</code>, <code>.results</code>, <code>.item</code>, <code>.index</code>, <code>.last_node</code>, <code>.visits</code>, <code>.signals</code>, <code>.errors</code>, <code>.counters</code> and <code>.resume</code>, plus the <code>json</code> function: <code>{{json .channels.notes}}</code>. Missing keys render as zero values.</p>
 <p>Without a <code>prompt</code>, the agent receives the <code>Item</code> (in a map) or the <code>Input</code>, followed by the output of each <code>context</code> node, or of the previous node when <code>context</code> is empty. A step with nothing to show gets <code>Begin.</code>.</p>
 <h3>Outputs</h3>
-<p>An agent step's output is <code>{"text": "&lt;answer&gt;"}</code>, or the parsed object when it has an <code>output_schema</code>. <code>writes</code> copies all of it (<code>output</code>) or a field (<code>output.verdict</code>) into a channel, applying the channel's reducer.</p>
+<p>An agent step's output is <code>{"text": "&lt;answer&gt;"}</code>, or the parsed object when it has an <code>output_schema</code>. <code>writes</code> copies all of it (<code>output</code>) or a field (<code>output.verdict</code>) into a channel, applying the channel's reducer. A field needs an <code>output_schema</code> that can hold it: without one, only <code>output</code> and <code>output.text</code> compile.</p>
 <h3 id="budgets">Usage counters and budgets</h3>
 <p>Budgets in <code>budget</code> (flow, crew or pattern) can use <code>agent_steps</code>, <code>tokens_in</code>, <code>tokens_out</code> and <code>cost_usd</code>. They are charged for every run, including failed and paused ones, and checked on completion, failure and pause. <code>max_steps</code> bounds the number of node visits.</p>
 <h3 id="example-flow">A larger example</h3>
@@ -377,6 +377,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
         <span class="c-key">context</span>: [plan, research]
         <span class="c-key">expected_output</span>: A verdict and the reason for it.
         <span class="c-key">human_input</span>: <span class="c-num">true</span>
+        <span class="c-key">output_schema</span>: {<span class="c-key">type</span>: object, <span class="c-key">properties</span>: {<span class="c-key">verdict</span>: {<span class="c-key">type</span>: string}}, <span class="c-key">required</span>: [verdict]}
         <span class="c-key">writes</span>: {<span class="c-key">verdict</span>: output.verdict}
         <span class="c-key">routes</span>: [plan, human]</code></pre></section>
 <section id="routing"><h2>Routing &amp; human in the loop</h2>

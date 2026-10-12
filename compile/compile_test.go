@@ -446,6 +446,46 @@ flows:
 `,
 			want: []string{`5: flows.f.nodes.s.flow: unknown flow "ghost"`},
 		},
+		{
+			name: "writes that can never resolve",
+			yaml: `
+models: {m: {provider: openai}}
+agents: {a: {model: m}}
+remotes: {r: {owner: ops, name: reviewer}}
+flows:
+  f:
+    channels: {c: {}, d: {}}
+    nodes:
+      - {id: plain, type: task, agent: a, writes: {c: output.summary}, next: far}
+      - {id: far, type: task, remote: r, writes: {c: output.text.deep}, next: closed}
+      - id: closed
+        type: task
+        agent: a
+        output_schema: {type: object, properties: {title: {type: string}}, additionalProperties: false}
+        writes: {c: output.title, d: output.summary}
+`,
+			want: []string{
+				`9: flows.f.nodes.plain.writes: channel "c": output.summary can never resolve: without an output_schema`,
+				`10: flows.f.nodes.far.writes: channel "c": output.text.deep can never resolve`,
+				`15: flows.f.nodes.closed.writes: channel "d": output.summary can never resolve: the output_schema has no property "summary"`,
+			},
+		},
+		{
+			name: "schedule input",
+			yaml: `
+models: {m: {provider: openai}}
+agents: {a: {model: m}}
+flows:
+  f: {nodes: [{id: s, type: task, agent: a}]}
+schedules:
+  word: {flow: f, cron: "@daily", input: hello}
+  list: {flow: f, cron: "@daily", input: [1, 2]}
+`,
+			want: []string{
+				`7: schedules.word.input: input must be an object`,
+				`8: schedules.list.input: input must be an object`,
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -471,5 +511,127 @@ flows:
 				}
 			}
 		})
+	}
+}
+
+// TestWritesThatMayResolve covers the write paths compile must accept: the
+// whole output, the plain answer, an activity's fields, and fields an output
+// schema declares or leaves open.
+func TestWritesThatMayResolve(t *testing.T) {
+	const fleet = `
+models: {m: {provider: openai}}
+agents: {a: {model: m}}
+flows:
+  f:
+    channels: {c: {}, d: {}}
+    nodes:
+      - {id: whole, type: task, agent: a, writes: {c: output, d: output.text}, next: act}
+      - {id: act, type: task, activity: publish, writes: {c: output.url}, next: open}
+      - id: open
+        type: task
+        agent: a
+        output_schema: {type: object, properties: {title: {type: string}}}
+        writes: {c: output.title, d: output.extra}
+schedules:
+  ok: {flow: f, cron: "@daily", input: {topic: nats}}
+  bare: {flow: f, cron: "@daily"}
+`
+
+	f, src, err := config.Parse([]byte(fleet))
+	if err == nil {
+		_, err = compile.Compile(f, catalog)
+	}
+
+	if err != nil {
+		t.Fatalf("unexpected errors:\n%s", strings.Join(src.Describe(err), "\n"))
+	}
+}
+
+// TestFailedCrewIsNotAnUnknownFlow: a crew or pattern that fails to expand
+// reports its own problem; references to it are not reported on top.
+func TestFailedCrewIsNotAnUnknownFlow(t *testing.T) {
+	const fleet = `
+models: {m: {provider: openai}}
+agents: {a: {model: m}}
+flows:
+  f: {nodes: [{id: s, type: subflow, flow: c}]}
+crews:
+  c: {tasks: [{id: t, agent: a}]}
+patterns:
+  p: {type: teleport}
+schedules:
+  daily: {flow: c, cron: "@daily"}
+expose: {flows: [c, p]}
+`
+
+	f, src, err := config.Parse([]byte(fleet))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = compile.Compile(f, catalog)
+	got := strings.Join(src.Describe(err), "\n")
+
+	if !strings.Contains(got, "crews.c") || !strings.Contains(got, "patterns.p.type") {
+		t.Errorf("missing the crew's and the pattern's own errors in:\n%s", got)
+	}
+
+	if strings.Contains(got, "unknown flow") {
+		t.Errorf("a failed crew or pattern is reported as an unknown flow:\n%s", got)
+	}
+}
+
+// TestErrorOrderIsStable: the same fleet reports its problems in the same
+// order on every run, whatever order Go walks its maps in.
+func TestErrorOrderIsStable(t *testing.T) {
+	const fleet = `
+models:
+  m1: {provider: openai, api_key: "${MISSING_1}"}
+  m2: {provider: openai, api_key: "${MISSING_2}"}
+  m3: {provider: openai, api_key: "${MISSING_3}"}
+  m4: {provider: openai, api_key: "${MISSING_4}"}
+flows:
+  f1: {name: x, nodes: [{id: s, type: task, agent: a, activity: b}]}
+  f2: {name: x, nodes: [{id: s, type: task, agent: a, activity: b}]}
+  f3: {name: x, nodes: [{id: s, type: task, agent: a, activity: b}]}
+  f4: {name: x, nodes: [{id: s, type: task, agent: a, activity: b}]}
+`
+
+	describe := func(data string, opts ...config.Option) string {
+		t.Helper()
+
+		f, src, err := config.Parse([]byte(data), opts...)
+		if err == nil {
+			_, err = compile.Compile(f, catalog)
+		}
+
+		if err == nil {
+			t.Fatal("expected errors")
+		}
+
+		return strings.Join(src.Describe(err), "\n")
+	}
+
+	const channels = `
+flows:
+  f:
+    channels: {_mem_a: {}, _mem_b: {}, _mem_c: {}, _mem_d: {}, _mem_e: {}}
+    nodes: [{id: s, type: task, kind: k}]
+`
+
+	for name, run := range map[string]func() string{
+		"load":    func() string { return describe(fleet, config.WithLookupEnv(env)) },
+		"compile": func() string { return describe(channels) },
+	} {
+		first := run()
+		if strings.Count(first, "\n") < 3 {
+			t.Fatalf("%s: want several errors, got:\n%s", name, first)
+		}
+
+		for range 30 {
+			if got := run(); got != first {
+				t.Fatalf("%s: order changed between runs:\n%s\n--- then ---\n%s", name, first, got)
+			}
+		}
 	}
 }

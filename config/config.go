@@ -31,7 +31,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 
@@ -112,7 +114,8 @@ func Parse(data []byte, opts ...Option) (*spec.Fleet, *Source, error) {
 
 	fleet.Flows = make(map[string]*flow.Flow, len(f.Flows))
 
-	for name, ff := range f.Flows {
+	for _, name := range slices.Sorted(maps.Keys(f.Flows)) {
+		ff := f.Flows[name]
 		fl, ferrs := ff.toFlow(name)
 		errs = append(errs, ferrs...)
 		fleet.Flows[name] = fl

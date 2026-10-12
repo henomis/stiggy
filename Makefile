@@ -87,7 +87,7 @@ clean:
 
 ## license: Add Apache license headers to all Go files
 license:
-	find . -type f -name '*.go' -not -path './internal/archguard/testdata/*' \
+	find . -type f -name '*.go' \
 		-exec addlicense -c "Simone Vellei" -l apache {} +
 
 ## examples: Run every example on an embedded server with scripted models

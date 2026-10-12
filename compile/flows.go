@@ -15,6 +15,7 @@
 package compile
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -44,7 +45,7 @@ func (c *compiler) flows() []*flow.Flow {
 
 		c.checkName(path, "flow", name)
 
-		for ch := range f.Channels {
+		for _, ch := range sortedKeys(f.Channels) {
 			if strings.HasPrefix(ch, spec.MemoryChannelPrefix) {
 				c.errorf(path+".channels."+ch, "channel names starting with %q are reserved for agent memory",
 					spec.MemoryChannelPrefix)
@@ -172,7 +173,7 @@ func (c *compiler) node(flowPath string, fc *flowCtx, n *flow.Node, i int) {
 	path := nodePath(flowPath, n, i)
 
 	if (n.Type == flow.NodeSubflow || n.Type == flow.NodeMap) && n.Flow != "" {
-		if _, ok := c.fleet.Flows[n.Flow]; !ok {
+		if !c.flowKnown(n.Flow) {
 			c.errorf(path+".flow", "unknown flow %q", n.Flow)
 		}
 	}
@@ -197,7 +198,7 @@ func (c *compiler) node(flowPath string, fc *flowCtx, n *flow.Node, i int) {
 	c.stepAgentOnly(path, step)
 	c.stepPrompt(path, step)
 	c.stepContext(path, fc, step)
-	c.stepWrites(path, fc, step)
+	c.stepWrites(path, fc, n, step)
 	c.stepRoutes(path, fc, n, step)
 }
 
@@ -332,16 +333,64 @@ func (c *compiler) stepPrompt(path string, s spec.Step) {
 	}
 }
 
-func (c *compiler) stepWrites(path string, fc *flowCtx, s spec.Step) {
+func (c *compiler) stepWrites(path string, fc *flowCtx, n *flow.Node, s spec.Step) {
 	for _, ch := range sortedKeys(s.Writes) {
 		if _, ok := fc.channels[ch]; !ok {
 			c.errorf(path+".writes", "channel %q is not declared in the flow's channels", ch)
 		}
 
-		if _, err := spec.ParseWritePath(s.Writes[ch]); err != nil {
+		fields, err := spec.ParseWritePath(s.Writes[ch])
+		if err != nil {
 			c.errorf(path+".writes", "channel %q: %v", ch, err)
+
+			continue
+		}
+
+		if msg := unresolvable(n, s, fields); msg != "" {
+			c.errorf(path+".writes", "channel %q: %s can never resolve: %s", ch, s.Writes[ch], msg)
 		}
 	}
+}
+
+// unresolvable says why a write path can never find its field in the step's
+// output, "" when it may. At run time a missing field is retryable (the
+// model may add it on the next attempt), so a path that cannot resolve would
+// re-run the agent, tools included, until its retries run out. An activity's
+// output is whatever its Go code returns, so it is not checked.
+func unresolvable(n *flow.Node, s spec.Step, fields []string) string {
+	if s.Activity != "" || len(fields) == 0 {
+		return ""
+	}
+
+	if n.OutputSchema == nil {
+		if len(fields) == 1 && fields[0] == spec.OutputText {
+			return ""
+		}
+
+		return fmt.Sprintf(
+			"without an output_schema the output is {%q: answer}; write output or output.%s, or add an output_schema",
+			spec.OutputText, spec.OutputText)
+	}
+
+	b, err := json.Marshal(n.OutputSchema)
+	if err != nil {
+		return ""
+	}
+
+	var schema struct {
+		Properties           map[string]any `json:"properties"`
+		AdditionalProperties any            `json:"additionalProperties"`
+	}
+
+	if json.Unmarshal(b, &schema) != nil || schema.AdditionalProperties != false {
+		return ""
+	}
+
+	if _, ok := schema.Properties[fields[0]]; ok {
+		return ""
+	}
+
+	return fmt.Sprintf("the output_schema has no property %q and allows no others", fields[0])
 }
 
 func (c *compiler) stepRoutes(path string, fc *flowCtx, n *flow.Node, s spec.Step) {

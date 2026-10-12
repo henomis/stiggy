@@ -154,7 +154,7 @@ func (c *compiler) expose() {
 	}
 
 	c.refs("expose.agents", "agent", e.Agents, func(n string) bool { _, ok := c.fleet.Agents[n]; return ok })
-	c.refs("expose.flows", "flow", e.Flows, func(n string) bool { _, ok := c.fleet.Flows[n]; return ok })
+	c.refs("expose.flows", "flow", e.Flows, c.flowKnown)
 
 	// Agents and flows share the owner's protocol names.
 	for _, f := range e.Flows {

@@ -19,6 +19,7 @@
 package compile
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -124,7 +125,7 @@ type Schedule struct {
 // expands until its first problem and reports only that one.
 // f is not modified.
 func Compile(f *spec.Fleet, cat Catalog) (*Plan, error) {
-	c := &compiler{cat: cat, kinds: map[string]Worker{}, origins: map[string]origin{}}
+	c := &compiler{cat: cat, kinds: map[string]Worker{}, origins: map[string]origin{}, failed: map[string]bool{}}
 	c.fleet = c.expand(f)
 
 	c.fleetLevel()
@@ -153,6 +154,17 @@ type compiler struct {
 	cat     Catalog
 	errs    []error
 	kinds   map[string]Worker
+	// failed holds the crews and patterns that did not expand: their flows
+	// are missing, which their own error already explains.
+	failed map[string]bool
+}
+
+// flowKnown reports whether name is a flow of the fleet, or a crew or
+// pattern that failed to expand into one.
+func (c *compiler) flowKnown(name string) bool {
+	_, ok := c.fleet.Flows[name]
+
+	return ok || c.failed[name]
 }
 
 func (c *compiler) errorf(path, format string, args ...any) {
@@ -247,7 +259,7 @@ func (c *compiler) schedules() []Schedule {
 
 		c.checkName(path, "schedule", name)
 
-		if _, ok := c.fleet.Flows[s.Flow]; !ok {
+		if !c.flowKnown(s.Flow) {
 			c.errorf(path+".flow", "unknown flow %q", s.Flow)
 		}
 
@@ -255,10 +267,30 @@ func (c *compiler) schedules() []Schedule {
 			c.errorf(path+".cron", "%v", err)
 		}
 
+		if !isObject(s.Input) {
+			c.errorf(path+".input", "input must be an object (a flow input is a JSON object)")
+		}
+
 		out = append(out, Schedule{Schedule: s, Name: name})
 	}
 
 	return out
+}
+
+// isObject reports whether v is nil or encodes as a JSON object.
+func isObject(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return false
+	}
+
+	var m map[string]any
+
+	return json.Unmarshal(b, &m) == nil
 }
 
 func (c *compiler) checkName(path, what, name string) {
