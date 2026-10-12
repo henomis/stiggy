@@ -3,7 +3,7 @@ module github.com/henomis/stiggy
 go 1.26.4
 
 require (
-	github.com/henomis/packtrail v1.0.1-rc.2
+	github.com/henomis/packtrail v1.0.1
 	github.com/henomis/phero/v2 v2.0.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/modelcontextprotocol/go-sdk v1.4.0
