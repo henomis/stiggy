@@ -7,6 +7,7 @@ MODULE := $(shell $(GO) list -m)
 PKGS := $(shell $(GO) list ./... | grep -v -e /examples/ -e /e2e)
 GOLANGCI_LINT := golangci-lint
 BIN_DIR := bin
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 
 # Default target
 all: test lint
@@ -36,7 +37,7 @@ help:
 ## build: Build the stiggy binary (static; honors GOOS/GOARCH)
 build:
 	@echo "Building $(BIN_DIR)/stiggy..."
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BIN_DIR)/stiggy ./cmd/stiggy
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN_DIR)/stiggy ./cmd/stiggy
 
 ## test: Run all tests (excluding examples)
 test:

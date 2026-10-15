@@ -181,3 +181,30 @@ flows:
 		t.Errorf("missing %q in:\n%s", want, out)
 	}
 }
+
+func TestVersion(t *testing.T) {
+	for _, arg := range []string{cmdNameVersion, flagVersion, flagVersionLong} {
+		out, _, err := runCLI(t, arg)
+		if err != nil {
+			t.Fatalf("%s: %v", arg, err)
+		}
+
+		for _, want := range []string{"stiggy ", "\nphero ", "\npacktrail ", "\ngo"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: missing %q in %q", arg, want, out)
+			}
+		}
+	}
+}
+
+func TestVersionFromLdflags(t *testing.T) {
+	old := version
+	version = "v9.9.9"
+
+	t.Cleanup(func() { version = old })
+
+	out, _, _ := runCLI(t, "version")
+	if !strings.HasPrefix(out, "stiggy v9.9.9\n") {
+		t.Fatalf("out = %q", out)
+	}
+}

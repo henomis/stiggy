@@ -57,6 +57,9 @@ executions (same connection flags, and -ns NAMESPACE):
   fork <exec> <seq>              branch an execution from a point in history
   rerun <exec> <node>            run again from a node
 
+other:
+  version                        the stiggy, phero and packtrail versions
+
 -activities names the Go activities a library program registers, so a fleet
 written for the library can be checked by the binary.
 -no-env leaves ${VAR} references unexpanded, so a fleet can be checked
@@ -73,6 +76,9 @@ const (
 	cmdNameRun      = "run"
 	cmdNameStart    = "start"
 	cmdNameAgents   = "agents"
+	cmdNameVersion  = "version"
+	flagVersion     = "-version"
+	flagVersionLong = "--version"
 	formatYAML      = "yaml"
 	formatJSON      = "json"
 )
@@ -116,6 +122,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return cmdStart(ctx, args[1:], stdout, stderr)
 	case cmdNameAgents:
 		return cmdAgents(ctx, args[1:], stdout, stderr)
+	case cmdNameVersion, flagVersion, flagVersionLong:
+		return cmdVersion(stdout)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(stdout, usage)
 

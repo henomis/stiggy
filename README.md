@@ -1,5 +1,7 @@
 # stiggy
 
+[![Build Status](https://github.com/henomis/stiggy/actions/workflows/checks.yml/badge.svg)](https://github.com/henomis/stiggy/actions/workflows/checks.yml) [![GoDoc](https://godoc.org/github.com/henomis/stiggy?status.svg)](https://godoc.org/github.com/henomis/stiggy) [![Go Report Card](https://goreportcard.com/badge/github.com/henomis/stiggy)](https://goreportcard.com/report/github.com/henomis/stiggy) [![GitHub release](https://img.shields.io/github/release/henomis/stiggy.svg)](https://github.com/henomis/stiggy/releases)
+
 stiggy deploys multi-agent architectures on NATS. It glues
 [phero](https://github.com/henomis/phero), which provides the agents, to
 [packtrail](https://github.com/henomis/packtrail), which provides durable,
@@ -161,8 +163,6 @@ memory, cross-team remote agents and delegates, a crew over the NATS Agent
 Protocol, and the evaluator and debate patterns. `make e2e` starts Qdrant with
 Docker (`make e2e-down` stops it) and needs Ollama with `nomic-embed-text` for
 embeddings; `E2E_RUN=TestName` runs one scenario.
-
-Requires Go 1.26.4. Depends on the released `phero/v2` v2.0.0 and `packtrail` v1.0.1.
 
 ## License
 
