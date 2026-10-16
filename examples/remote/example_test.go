@@ -15,14 +15,38 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
+func fake(r stiggytest.Request) stiggytest.Response {
+	switch {
+	case strings.Contains(r.System, "Legal reviewer"):
+		return stiggytest.Response{Text: "No legal risk found."}
+	case len(r.ToolResults) == 0:
+		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "ask_legal", Args: map[string]any{"prompt": "Can we say fastest?"}}}}
+	default:
+		return stiggytest.Response{Text: "Introducing stiggy: durable agent fleets on NATS. Legal says: " + r.ToolResults[0]}
+	}
+}
+
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Model(fake)}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		for _, want := range []string{
 			`prompt from step "review"`,
 			"Legal says: No legal risk found.",

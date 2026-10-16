@@ -118,7 +118,7 @@
 # from a checkout
 make build        # bin/stiggy (static, honors GOOS/GOARCH)
 make test         # all tests with -race
-make check        # test + examples + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.0.0 and <code>packtrail</code> v1.0.1.</p></section>
+make check        # test + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.0.0 and <code>packtrail</code> v1.0.1.</p></section>
 <section id="quickstart"><h2>Quick start</h2>
 <pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
 <span class="c-key">namespace</span>: newsroom
@@ -441,20 +441,22 @@ app, err := stiggy.New(nc, stiggy.WithTool("network", post))</code></pre>
 <h3>Testing</h3>
 <p><code>stiggytest.Start(t, opts...)</code> boots an embedded NATS server, runs the app and returns a harness with the client; <code>Harness.Run(t, flow, input)</code> starts a flow and waits for the execution to end. Fake models (<code>Reply</code>, <code>Replies</code>, <code>Echo</code>) script agent answers deterministically, so end-to-end tests need no API key. <code>Model(fn func(Request) Response)</code> is a fake that can call tools: return <code>Calls</code>, then <code>Text</code> once <code>ToolResults</code> shows they ran.</p></section>
 <section id="examples"><h2>Examples</h2>
-<p>Each example runs against <code>$NATS_URL</code>, with a real model when <code>OLLAMA_MODEL</code>, <code>OPENAI_API_KEY</code> (<code>OPENAI_MODEL</code>, default <code>gpt-4o-mini</code>) or <code>ANTHROPIC_API_KEY</code> (<code>ANTHROPIC_MODEL</code>) is set, tried in that order, and a scripted one otherwise.</p>
+<p>Each example is a plain program, written the way you would write your own: it connects to the NATS server at <code>$NATS_URL</code> (default <code>nats://127.0.0.1:4222</code>, with JetStream) and uses <code>gemma4:cloud</code> through a local Ollama.</p>
 <div class="tablewrap"><table><thead><tr><th>Example</th><th>Shows</th></tr></thead><tbody>
 <tr><td id="ex-hello"><code>examples/hello</code></td><td>The smallest YAML fleet</td></tr>
 <tr><td id="ex-router"><code>examples/router</code></td><td>Agent-chosen routing, built with the Go API</td></tr>
+<tr><td id="ex-translator"><code>examples/translator</code></td><td>An agent served on its own, without a workflow (<code>translator/</code>), used by two separate workflow programs as a remote step (<code>support/</code>, <code>newsletter/</code>)</td></tr>
 <tr><td id="ex-mapreduce"><code>examples/mapreduce</code></td><td>Structured output, a parallel map, an append channel</td></tr>
 <tr><td id="ex-hitl"><code>examples/hitl</code></td><td><code>ask_human</code> and human review, resumed with <code>Client.Resume</code></td></tr>
 <tr><td id="ex-crew"><code>examples/crew</code></td><td>A crew with a guardrail, also served as a protocol agent</td></tr>
 <tr><td id="ex-remote"><code>examples/remote</code></td><td>Another team's phero agent as a step and as a delegate</td></tr>
 <tr><td id="ex-socialsim"><code>examples/socialsim</code></td><td>A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (<code>JobFromContext</code>), rounds in a loop, and a what-if fork with breaking news</td></tr>
 </tbody></table></div>
-<pre><code>go run ./examples/router
-OLLAMA_MODEL=llama3.2-eco go run ./examples/mapreduce
-make examples        # scripted models, embedded server
-make examples-live   # a real model, default OLLAMA_MODEL=llama3.2-eco</code></pre></section>
+<pre><code>nats-server -js &amp;
+go run ./examples/router
+make examples        # the examples' tests, with scripted models
+make examples-live   # the same tests, against gemma4:cloud</code></pre>
+<p>The tests supply scripted models (<code>stiggytest</code>) through each example's <code>run</code> function, so <code>make examples</code> checks the output exactly. Both targets use the server at <code>$NATS_URL</code> and skip without one.</p></section>
 <section id="architecture"><h2>Architecture rules</h2>
 <h3>No direct NATS access</h3>
 <p>NATS is the only transport, and stiggy's own state lives in NATS (through packtrail). Agent storage you configure may be any backend phero offers. stiggy reaches NATS only through the public Go APIs of phero and packtrail:</p>

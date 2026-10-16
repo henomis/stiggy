@@ -15,14 +15,40 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
+func fake(r stiggytest.Request) stiggytest.Response {
+	switch {
+	case r.Schema:
+		return stiggytest.Response{Text: `{"topics": ["JetStream", "Key-Value", "Object Store"]}`}
+	case strings.Contains(r.System, "Researcher"):
+		topic := strings.TrimSuffix(strings.TrimPrefix(r.Prompt, "Write one sentence about "), ".")
+
+		return stiggytest.Response{Text: topic + " is part of NATS."}
+	default:
+		return stiggytest.Response{Text: "NATS covers streaming, key-value and object storage."}
+	}
+}
+
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Model(fake)}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		if !strings.Contains(out, "3 notes") || !strings.Contains(out, "summary: NATS covers") {
 			t.Fatalf("output:\n%s", out)
 		}

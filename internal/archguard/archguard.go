@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"slices"
 	"sort"
 	"strings"
 
@@ -81,7 +80,8 @@ var allowedMethods = map[string]map[string]bool{
 
 // Rules configures a check.
 type Rules struct {
-	// DialPackages lists the import paths allowed to call nats.Connect.
+	// DialPackages lists the import paths allowed to call nats.Connect. A
+	// path ending in "/..." also allows every package below it.
 	DialPackages []string
 }
 
@@ -89,6 +89,21 @@ type Rules struct {
 type Violation struct {
 	Pos token.Position
 	Msg string
+}
+
+// canDial reports whether the package at path may call nats.Connect.
+func (r Rules) canDial(path string) bool {
+	for _, d := range r.DialPackages {
+		if prefix, ok := strings.CutSuffix(d, "/..."); ok && (path == prefix || strings.HasPrefix(path, prefix+"/")) {
+			return true
+		}
+
+		if path == d {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (v Violation) String() string { return fmt.Sprintf("%s: %s", v.Pos, v.Msg) }
@@ -169,7 +184,7 @@ func checkPackage(p *packages.Package, rules Rules, add func(Violation)) {
 
 	// Test variants carry a "[pkg.test]" suffix in their ID but share the
 	// import path, which is what DialPackages lists.
-	canDial := slices.Contains(rules.DialPackages, strings.TrimSuffix(p.PkgPath, "_test"))
+	canDial := rules.canDial(strings.TrimSuffix(p.PkgPath, "_test"))
 
 	for id, obj := range p.TypesInfo.Uses {
 		if obj.Pkg() == nil || obj.Pkg().Path() != natsPkg {

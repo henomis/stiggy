@@ -57,7 +57,3 @@ jobs:
 
       - name: Vet
         run: make vet
-
-      # Examples are excluded from `make test`; run them with scripted models.
-      - name: Examples
-        run: make examples

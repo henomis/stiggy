@@ -19,6 +19,9 @@
 // ways: as a flow with the packtrail client, and as an agent with phero's
 // protocol client.
 //
+// It needs NATS with JetStream ($NATS_URL, default nats://127.0.0.1:4222)
+// and Ollama serving gemma4:cloud:
+//
 //	nats-server -js &
 //	go run ./examples/crew
 package main
@@ -28,18 +31,20 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/henomis/packtrail"
+	"github.com/henomis/phero/v2/llm/openai"
 	natsagent "github.com/henomis/phero/v2/nats"
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/config"
-	"github.com/henomis/stiggy/examples/internal/exutil"
-	"github.com/henomis/stiggy/stiggytest"
+	"github.com/henomis/stiggy/spec"
 )
 
 const fleet = `
@@ -70,55 +75,86 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	nc, err := exutil.Connect()
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	nc, err := nats.Connect(url, nats.Name("stiggy-example-crew"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	if err = run(ctx, nc, os.Stdout); err != nil {
+	if err = run(ctx, nc, newModel(), os.Stdout); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func fake(r stiggytest.Request) stiggytest.Response {
-	switch {
-	case strings.Contains(r.System, "Researcher"):
-		return stiggytest.Response{Text: "- NATS is a messaging system\n- JetStream adds persistence\n- KV is built on streams"}
-	case strings.Contains(r.System, "Editor"):
-		return stiggytest.Response{Text: `{"valid": true, "feedback": ""}`}
-	default:
-		return stiggytest.Response{Text: "NATS is a messaging system; JetStream adds persistence, and KV builds on it."}
+// newModel is gemma4:cloud through a local Ollama. Cloud models answer 429
+// to concurrent requests, so calls go one at a time and failed ones are
+// retried.
+func newModel() spec.Model {
+	return spec.Model{
+		Instance:  openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel("gemma4:cloud")),
+		Retries:   5,
+		RateLimit: &spec.RateLimit{MaxConcurrent: 1},
 	}
 }
 
-func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+func run(ctx context.Context, nc *nats.Conn, model spec.Model, out io.Writer) error {
 	f, src, err := config.Parse([]byte(fleet))
 	if err != nil {
 		return fmt.Errorf("%s", strings.Join(src.Describe(err), "\n"))
 	}
 
-	model, desc := exutil.Model(stiggytest.Model(fake))
-	fmt.Fprintln(out, "model:", desc)
+	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(exutil.Quiet()))
+	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(quiet))
 	if err != nil {
 		return err
 	}
 
-	stopApp, err := exutil.Serve(ctx, app)
-	if err != nil {
+	// Run serves the fleet until ctx ends; Ready says when it can take work.
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-app.Ready():
+	case err = <-done:
+		cancel()
+
 		return err
 	}
-	defer stopApp() //nolint:errcheck // shutdown at the end of the example
+
+	defer func() {
+		cancel()
+		<-done
+	}()
 
 	// 1. As a flow.
-	st, err := exutil.RunFlow(ctx, app, "brief", map[string]any{"prompt": "NATS"}, out)
+	id, err := app.Client().Start(ctx, "brief", map[string]any{"prompt": "NATS"})
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(out, "as a flow (write ran %d times):\n%s\n\n", st.Visits["write"], exutil.Text(st.Output))
+	st, err := app.Client().Wait(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if st.Status != packtrail.StatusCompleted {
+		return fmt.Errorf("execution %s: %s %s %s", id, st.Status, st.Reason, st.Error)
+	}
+
+	var brief struct{ Text string }
+	if err = st.DecodeOutput(&brief); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "as a flow (write ran %d times):\n%s\n\n", st.Visits["write"], brief.Text)
 
 	// 2. As a NATS Agent Protocol agent, the way any v0.3 client would.
 	client := natsagent.NewClient(nc)

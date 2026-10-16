@@ -15,14 +15,38 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
+func fake(r stiggytest.Request) stiggytest.Response {
+	switch {
+	case strings.Contains(r.System, "Researcher"):
+		return stiggytest.Response{Text: "- NATS is a messaging system\n- JetStream adds persistence\n- KV is built on streams"}
+	case strings.Contains(r.System, "Editor"):
+		return stiggytest.Response{Text: `{"valid": true, "feedback": ""}`}
+	default:
+		return stiggytest.Response{Text: "NATS is a messaging system; JetStream adds persistence, and KV builds on it."}
+	}
+}
+
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Model(fake)}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		if !strings.Contains(out, "as a flow (write ran 1 times)") || !strings.Contains(out, "as an agent (examples/brief via stiggy)") {
 			t.Fatalf("output:\n%s", out)
 		}

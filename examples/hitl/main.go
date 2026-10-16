@@ -17,6 +17,9 @@
 // pauses durably at each point and resumes with Client.Resume; here a
 // simulated human answers, so the example runs unattended.
 //
+// It needs NATS with JetStream ($NATS_URL, default nats://127.0.0.1:4222)
+// and Ollama serving gemma4:cloud:
+//
 //	nats-server -js &
 //	go run ./examples/hitl
 package main
@@ -27,18 +30,18 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/henomis/packtrail"
+	"github.com/henomis/phero/v2/llm/openai"
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/config"
-	"github.com/henomis/stiggy/examples/internal/exutil"
-	"github.com/henomis/stiggy/stiggytest"
+	"github.com/henomis/stiggy/spec"
 )
 
 const fleet = `
@@ -63,27 +66,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	nc, err := exutil.Connect()
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	nc, err := nats.Connect(url, nats.Name("stiggy-example-hitl"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	if err = run(ctx, nc, os.Stdout); err != nil {
+	if err = run(ctx, nc, newModel(), os.Stdout); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// fake asks for the destination, then plans, then shortens the plan when
-// the reviewer asks for it.
-func fake(r stiggytest.Request) stiggytest.Response {
-	switch {
-	case strings.Contains(r.Prompt, "shorter"):
-		return stiggytest.Response{Text: "Rome: Colosseum Saturday, Trastevere Sunday."}
-	case strings.Contains(r.Prompt, "The human answered:"):
-		return stiggytest.Response{Text: "Rome: Saturday Colosseum and Forum, Sunday Vatican and Trastevere, with long lunches."}
-	default:
-		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "ask_human", Args: map[string]any{"question": "Where to?"}}}}
+// newModel is gemma4:cloud through a local Ollama. Cloud models answer 429
+// to concurrent requests, so calls go one at a time and failed ones are
+// retried.
+func newModel() spec.Model {
+	return spec.Model{
+		Instance:  openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel("gemma4:cloud")),
+		Retries:   5,
+		RateLimit: &spec.RateLimit{MaxConcurrent: 1},
 	}
 }
 
@@ -104,25 +110,37 @@ func (h *human) reply(kind string) any {
 	return map[string]any{"approve": true}
 }
 
-func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+func run(ctx context.Context, nc *nats.Conn, model spec.Model, out io.Writer) error {
 	f, _, err := config.Parse([]byte(fleet))
 	if err != nil {
 		return err
 	}
 
-	model, desc := exutil.Model(stiggytest.Model(fake))
-	fmt.Fprintln(out, "model:", desc)
+	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(exutil.Quiet()))
+	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(quiet))
 	if err != nil {
 		return err
 	}
 
-	stopApp, err := exutil.Serve(ctx, app)
-	if err != nil {
+	// Run serves the fleet until ctx ends; Ready says when it can take work.
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-app.Ready():
+	case err = <-done:
+		cancel()
+
 		return err
 	}
-	defer stopApp() //nolint:errcheck // shutdown at the end of the example
+
+	defer func() {
+		cancel()
+		<-done
+	}()
 
 	c := app.Client()
 
@@ -141,13 +159,13 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		}
 
 		if st.Status.Terminal() {
-			fmt.Fprintf(out, "execution %s: %s\nfinal plan: %s\n", id, st.Status, exutil.Text(st.Output))
+			fmt.Fprintf(out, "execution %s: %s\nfinal plan: %s\n", id, st.Status, text(st.Output))
 
 			return nil
 		}
 
 		in := pending(st)
-		fmt.Fprintf(out, "paused for a %s: %s%s\n", in.Kind, in.Question, exutil.Text(in.Answer))
+		fmt.Fprintf(out, "paused for a %s: %s%s\n", in.Kind, in.Question, text(in.Answer))
 
 		answer := h.reply(in.Kind)
 		fmt.Fprintf(out, "human: %v\n", answer)
@@ -178,4 +196,15 @@ func pending(st *packtrail.State) *interrupt {
 	}
 
 	return nil
+}
+
+// text returns the answer of a plain agent output ({"text": ...}), or the
+// raw JSON of any other output.
+func text(raw json.RawMessage) string {
+	var o struct{ Text string }
+	if json.Unmarshal(raw, &o) == nil && o.Text != "" {
+		return o.Text
+	}
+
+	return string(raw)
 }

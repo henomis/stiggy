@@ -21,8 +21,13 @@ import (
 	"github.com/henomis/stiggy/internal/archguard"
 )
 
+// rules lets internal/natsconn dial for stiggy, and the examples dial for
+// themselves, as a user's program would.
 var rules = archguard.Rules{
-	DialPackages: []string{"github.com/henomis/stiggy/internal/natsconn"},
+	DialPackages: []string{
+		"github.com/henomis/stiggy/internal/natsconn",
+		"github.com/henomis/stiggy/examples/...",
+	},
 }
 
 // TestNoDirectNATS is the guard itself: the whole module, tests included,

@@ -19,6 +19,9 @@
 // The prompts carry Stiggy-Exec/-Node/-Attempt headers, which the remote
 // agent reads to identify the step.
 //
+// It needs NATS with JetStream ($NATS_URL, default nats://127.0.0.1:4222)
+// and Ollama serving gemma4:cloud:
+//
 //	nats-server -js &
 //	go run ./examples/remote
 package main
@@ -28,21 +31,23 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/henomis/packtrail"
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/llm/openai"
 	natsagent "github.com/henomis/phero/v2/nats"
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/config"
-	"github.com/henomis/stiggy/examples/internal/exutil"
-	"github.com/henomis/stiggy/stiggytest"
+	"github.com/henomis/stiggy/spec"
 )
 
 const fleet = `
@@ -69,25 +74,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	nc, err := exutil.Connect()
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	nc, err := nats.Connect(url, nats.Name("stiggy-example-remote"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	if err = run(ctx, nc, os.Stdout); err != nil {
+	if err = run(ctx, nc, newModel(), os.Stdout); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func fake(r stiggytest.Request) stiggytest.Response {
-	switch {
-	case strings.Contains(r.System, "Legal reviewer"):
-		return stiggytest.Response{Text: "No legal risk found."}
-	case len(r.ToolResults) == 0:
-		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "ask_legal", Args: map[string]any{"prompt": "Can we say fastest?"}}}}
-	default:
-		return stiggytest.Response{Text: "Introducing stiggy: durable agent fleets on NATS. Legal says: " + r.ToolResults[0]}
+// newModel is gemma4:cloud through a local Ollama. Cloud models answer 429
+// to concurrent requests, so calls go one at a time and failed ones are
+// retried.
+func newModel() spec.Model {
+	return spec.Model{
+		Instance:  openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel("gemma4:cloud")),
+		Retries:   5,
+		RateLimit: &spec.RateLimit{MaxConcurrent: 1},
 	}
 }
 
@@ -129,10 +139,7 @@ func (h handler) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Resu
 	return h(ctx, parts...)
 }
 
-func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
-	model, desc := exutil.Model(stiggytest.Model(fake))
-	fmt.Fprintln(out, "model:", desc)
-
+func run(ctx context.Context, nc *nats.Conn, model spec.Model, out io.Writer) error {
 	teamCtx, stopTeam := context.WithCancel(ctx)
 	defer stopTeam()
 
@@ -145,28 +152,56 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		return fmt.Errorf("%s", strings.Join(src.Describe(err), "\n"))
 	}
 
-	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(exutil.Quiet()))
+	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model), stiggy.WithLogger(quiet))
 	if err != nil {
 		return err
 	}
 
-	stopApp, err := exutil.Serve(ctx, app)
+	// Run serves the fleet until ctx ends; Ready says when it can take work.
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-app.Ready():
+	case err = <-done:
+		cancel()
+
+		return err
+	}
+
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	id, err := app.Client().Start(ctx, "announce", map[string]any{"product": "stiggy"})
 	if err != nil {
 		return err
 	}
-	defer stopApp() //nolint:errcheck // shutdown at the end of the example
 
-	st, err := exutil.RunFlow(ctx, app, "announce", map[string]any{"product": "stiggy"}, out)
+	st, err := app.Client().Wait(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	var draft struct{ Text string }
+	if st.Status != packtrail.StatusCompleted {
+		return fmt.Errorf("execution %s: %s %s %s", id, st.Status, st.Reason, st.Error)
+	}
+
+	var draft, review struct{ Text string }
 	if err = st.Result("draft", &draft); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(out, "draft: %s\nlegal review: %s\n", draft.Text, exutil.Text(st.Output))
+	if err = st.DecodeOutput(&review); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "draft: %s\nlegal review: %s\n", draft.Text, review.Text)
 
 	return nil
 }
