@@ -33,3 +33,8 @@ docs/
 # Local trackers
 REVIEW-BACKLOG.md
 UPSTREAM-REQUIREMENTS.md
+CLAUDE.md
+
+# Designer page: built separately (cd ui && npm ci && npm run build)
+ui/node_modules/
+ui/dist/
