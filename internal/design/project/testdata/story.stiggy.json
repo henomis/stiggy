@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "name": "Newsroom",
+  "credentials": [
+    {"id": "c1", "name": "OpenAI", "provider": "openai", "env": "OPENAI_API_KEY"}
+  ],
+  "workflows": [
+    {
+      "id": "w1",
+      "name": "Story",
+      "nodes": [
+        {"id": "s", "type": "start", "name": "Start", "position": {"x": 0, "y": 0},
+         "params": {"inputs": [{"name": "topic", "type": "text", "description": "What to write about"}]}},
+        {"id": "a1", "type": "agent", "name": "Plan", "position": {"x": 0, "y": 100},
+         "params": {"credential": "c1", "model": "gpt-4o-mini", "instructions": "You are an editor.",
+                    "prompt": "Plan coverage of {{ref start topic}}: three angles.",
+                    "output": [{"name": "angles", "type": "list", "description": "Angles to research"}]}},
+        {"id": "l1", "type": "loop", "name": "Research", "position": {"x": 0, "y": 200},
+         "params": {"over": "{{ref a1 angles}}", "max_parallel": 3, "credential": "c1", "model": "gpt-4o-mini",
+                    "instructions": "You are a researcher.", "prompt": "Research {{ref item}} for {{ref start topic}}.",
+                    "remember": true}},
+        {"id": "a2", "type": "agent", "name": "Write", "position": {"x": 0, "y": 300},
+         "params": {"credential": "c1", "model": "gpt-4o-mini", "temperature": 0.7,
+                    "instructions": "You are a writer.", "prompt": "Write about {{ref start topic}} from {{ref l1}}."}},
+        {"id": "a3", "type": "agent", "name": "Fact check", "position": {"x": 0, "y": 400},
+         "params": {"credential": "c1", "model": "gpt-4o-mini", "instructions": "You check facts.",
+                    "prompt": "Check: {{ref a2 text}}",
+                    "output": [{"name": "ok", "type": "boolean"}, {"name": "issues", "type": "text"}]}},
+        {"id": "c", "type": "condition", "name": "Accurate?", "position": {"x": 0, "y": 500},
+         "params": {"rules": [{"left": "{{ref a3 ok}}", "op": "is_true"}]}},
+        {"id": "h", "type": "approval", "name": "Sign off", "position": {"x": 0, "y": 600},
+         "params": {"message": "Publish this article?", "timeout": "48h"}},
+        {"id": "o", "type": "output", "name": "Output", "position": {"x": 0, "y": 700},
+         "params": {"fields": [{"name": "article", "value": "{{ref a2 text}}"}, {"name": "topic", "value": "{{ref start topic}}"}, {"name": "status", "value": "approved"}]}}
+      ],
+      "edges": [
+        {"id": "e1", "from": {"node": "s"}, "to": {"node": "a1"}},
+        {"id": "e2", "from": {"node": "a1"}, "to": {"node": "l1"}},
+        {"id": "e3", "from": {"node": "l1"}, "to": {"node": "a2"}},
+        {"id": "e4", "from": {"node": "a2"}, "to": {"node": "a3"}},
+        {"id": "e5", "from": {"node": "a3"}, "to": {"node": "c"}},
+        {"id": "e6", "from": {"node": "c", "port": "true"}, "to": {"node": "h"}},
+        {"id": "e7", "from": {"node": "c", "port": "false"}, "to": {"node": "a2"}},
+        {"id": "e8", "from": {"node": "h", "port": "approved"}, "to": {"node": "o"}}
+      ]
+    }
+  ]
+}

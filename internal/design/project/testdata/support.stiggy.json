@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "name": "Support desk",
+  "namespace": "support",
+  "credentials": [
+    {"id": "oa", "name": "OpenAI", "provider": "openai", "env": "OPENAI_API_KEY"},
+    {"id": "ol", "name": "Local", "provider": "ollama"}
+  ],
+  "workflows": [
+    {
+      "id": "triage",
+      "name": "Triage",
+      "nodes": [
+        {"id": "s", "type": "start", "name": "Start", "position": {"x": 0, "y": 0},
+         "params": {"inputs": [{"name": "question", "type": "text"}]}},
+        {"id": "r", "type": "router", "name": "Triage", "position": {"x": 0, "y": 100},
+         "params": {"credential": "oa", "model": "gpt-4o-mini", "instructions": "You triage support questions.",
+                    "prompt": "Question: {{ref start question}}",
+                    "routes": [{"port": "docs", "when": "the answer is in the product docs"},
+                               {"port": "deep", "when": "it needs research by several people"}],
+                    "ask_human": true}},
+        {"id": "d", "type": "agent", "name": "Docs answer", "position": {"x": 0, "y": 200},
+         "params": {"credential": "ol", "model": "llama3.2", "instructions": "Answer from the docs only.",
+                    "prompt": "{{ref start question}}"},
+         "attachments": [
+           {"id": "k", "type": "knowledge", "name": "Product docs",
+            "params": {"description": "The product manual", "documents": "docs/*.md", "chunk_size": 800,
+                       "embedding_credential": "ol", "embedding_model": "nomic-embed-text",
+                       "store": "qdrant", "store_options": {"host": "localhost", "collection": "manual", "vector_size": 768}}},
+           {"id": "f", "type": "files", "name": "Workspace", "params": {"working_dir": "/srv/support", "read": true, "search": true}}
+         ]},
+        {"id": "t", "type": "team", "name": "Research team", "position": {"x": 200, "y": 200},
+         "params": {"kind": "supervisor", "lead": "Lead", "task": "Investigate: {{ref start question}}",
+                    "members": [
+                      {"name": "Lead", "credential": "oa", "model": "gpt-4o", "instructions": "You coordinate."},
+                      {"name": "Searcher", "credential": "oa", "model": "gpt-4o-mini", "instructions": "You search."},
+                      {"name": "Writer", "credential": "oa", "model": "gpt-4o-mini", "instructions": "You write answers."}
+                    ]}},
+        {"id": "p", "type": "parallel", "name": "Review", "position": {"x": 0, "y": 300},
+         "params": {"branches": ["tone", "facts"]}},
+        {"id": "b1", "type": "agent", "name": "Tone", "position": {"x": 0, "y": 400},
+         "params": {"credential": "oa", "model": "gpt-4o-mini", "prompt": "Check the tone of {{ref d text}}"}},
+        {"id": "b2", "type": "subworkflow", "name": "Facts", "position": {"x": 200, "y": 400},
+         "params": {"workflow": "verify", "inputs": [{"name": "claim", "value": "{{ref d text}}"}]}},
+        {"id": "m", "type": "merge", "name": "Reviewed", "position": {"x": 0, "y": 500}, "params": {"wait": "all"}},
+        {"id": "o", "type": "output", "name": "Output", "position": {"x": 0, "y": 600},
+         "params": {"fields": [{"name": "answer", "value": "{{ref d text}}"}, {"name": "review", "value": "{{ref m}}"}]}}
+      ],
+      "edges": [
+        {"id": "1", "from": {"node": "s"}, "to": {"node": "r"}},
+        {"id": "2", "from": {"node": "r", "port": "docs"}, "to": {"node": "d"}},
+        {"id": "3", "from": {"node": "r", "port": "deep"}, "to": {"node": "t"}},
+        {"id": "4", "from": {"node": "r", "port": "otherwise"}, "to": {"node": "d"}},
+        {"id": "5", "from": {"node": "d"}, "to": {"node": "p"}},
+        {"id": "6", "from": {"node": "p", "port": "tone"}, "to": {"node": "b1"}},
+        {"id": "7", "from": {"node": "p", "port": "facts"}, "to": {"node": "b2"}},
+        {"id": "8", "from": {"node": "b1"}, "to": {"node": "m"}},
+        {"id": "9", "from": {"node": "b2"}, "to": {"node": "m"}},
+        {"id": "10", "from": {"node": "m"}, "to": {"node": "o"}},
+        {"id": "11", "from": {"node": "t"}, "to": {"node": "o"}}
+      ]
+    },
+    {
+      "id": "verify",
+      "name": "Verify claim",
+      "nodes": [
+        {"id": "s", "type": "start", "name": "Start", "position": {"x": 0, "y": 0},
+         "params": {"inputs": [{"name": "claim", "type": "text"}]}},
+        {"id": "c", "type": "team", "name": "Checkers", "position": {"x": 0, "y": 100},
+         "params": {"kind": "crew",
+                    "members": [
+                      {"name": "Checker", "credential": "oa", "model": "gpt-4o-mini", "instructions": "You verify claims."},
+                      {"name": "Editor", "credential": "oa", "model": "gpt-4o-mini", "instructions": "You edit."}
+                    ],
+                    "tasks": [
+                      {"member": "Checker", "description": "Verify {{ref start claim}}", "expected_output": "A verdict"},
+                      {"member": "Editor", "description": "Summarise the verdict on {{ref start claim}}"}
+                    ]}}
+      ],
+      "edges": [
+        {"id": "1", "from": {"node": "s"}, "to": {"node": "c"}}
+      ]
+    }
+  ]
+}

@@ -150,7 +150,7 @@ func Empty() *Registry {
 }
 
 // New returns a registry with every built-in:
-//   - LLM providers: openai, anthropic, ollama;
+//   - LLM providers: openai, anthropic, google, ollama;
 //   - tool types: bash, file_read, file_write, file_edit, glob, grep, skill,
 //     kv, mcp;
 //   - memory types: simple, nats, psql, rag;
@@ -225,11 +225,19 @@ func get[V any](mu *sync.RWMutex, m map[string]V, name string) (V, bool) {
 }
 
 // Activities returns the registered activity names, sorted.
-func (r *Registry) Activities() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (r *Registry) Activities() []string { return names(&r.mu, r.activities) }
 
-	return slices.Sorted(maps.Keys(r.activities))
+// Providers returns the registered LLM provider names, sorted.
+func (r *Registry) Providers() []string { return names(&r.mu, r.providers) }
+
+// ToolTypes returns the registered tool type names, sorted.
+func (r *Registry) ToolTypes() []string { return names(&r.mu, r.toolTypes) }
+
+func names[V any](mu *sync.RWMutex, m map[string]V) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	return slices.Sorted(maps.Keys(m))
 }
 
 // Activity returns a registered activity.

@@ -40,7 +40,8 @@ const (
 	// development.
 	RoleAll Role = "all"
 	// RoleEngine runs the packtrail engine: it provisions the namespace,
-	// registers the flows and schedules, and drives executions.
+	// registers the flows and schedules, and drives executions. A fleet
+	// without flows needs no engine, so none is started.
 	RoleEngine Role = "engine"
 	// RoleWorkers runs the agent and activity workers. Scale it out freely.
 	RoleWorkers Role = "workers"

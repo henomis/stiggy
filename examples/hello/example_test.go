@@ -15,14 +15,29 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Reply(func(p string) string {
+		return "Hello, " + strings.TrimSuffix(strings.TrimPrefix(p, "Greet "), ".") + "! Welcome aboard."
+	})}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		if !strings.Contains(out, "completed") || !strings.Contains(out, "Hello, Ada!") {
 			t.Fatalf("output:\n%s", out)
 		}

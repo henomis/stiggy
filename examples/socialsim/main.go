@@ -29,6 +29,9 @@
 // the new posts into the timeline channel, so the execution's history holds
 // every post.
 //
+// It needs NATS with JetStream ($NATS_URL, default nats://127.0.0.1:4222)
+// and Ollama serving gemma4:cloud:
+//
 //	nats-server -js &
 //	go run ./examples/socialsim
 package main
@@ -42,9 +45,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -55,11 +58,11 @@ import (
 	"github.com/henomis/packtrail/event"
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/llm/openai"
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/config"
-	"github.com/henomis/stiggy/examples/internal/exutil"
-	"github.com/henomis/stiggy/stiggytest"
+	"github.com/henomis/stiggy/spec"
 )
 
 const fleet = `
@@ -352,78 +355,34 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	nc, err := exutil.Connect()
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	nc, err := nats.Connect(url, nats.Name("stiggy-example-socialsim"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	if err = run(ctx, nc, os.Stdout); err != nil {
+	if err = run(ctx, nc, newModel(), os.Stdout); err != nil {
 		log.Fatal(err)
 	}
 }
 
-var (
-	rolePattern  = regexp.MustCompile(`Role: (.+)`)
-	roundPattern = regexp.MustCompile(`Round (\d+)`)
-)
-
-// toolTurns counts the tool results of the current run: those after the
-// last user message (earlier ones come from the persona's memory).
-func toolTurns(msgs []llm.Message) int {
-	n := 0
-
-	for _, m := range msgs {
-		switch m.Role {
-		case llm.RoleUser:
-			n = 0
-		case llm.RoleTool:
-			n++
-		}
-	}
-
-	return n
-}
-
-// fake scripts the three agents: the director casts three people, each
-// persona reads the feed and posts, the analyst sums up.
-func fake(r stiggytest.Request) stiggytest.Response {
-	switch turns := toolTurns(r.Messages); {
-	case r.Schema:
-		return stiggytest.Response{Text: `{"personas": [
-			{"name": "Ada", "bio": "A cyclist and nurse.", "stance": "for the ban"},
-			{"name": "Bo", "bio": "A taxi driver.", "stance": "against the ban"},
-			{"name": "Cy", "bio": "A shop owner downtown.", "stance": "undecided"}]}`}
-	case strings.Contains(r.System, "Role: Analyst") && strings.Contains(r.Prompt, "Breaking news"):
-		return stiggytest.Response{Text: "The sales study moved Bo and Cy towards the ban in round 2."}
-	case strings.Contains(r.System, "Role: Analyst"):
-		return stiggytest.Response{Text: "Ada and Bo held their ground; Cy moved towards Ada after round 1."}
-	case turns == 0:
-		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "read_feed", Args: map[string]any{}}}}
-	case turns == 1:
-		name, round := "someone", "?"
-		if m := rolePattern.FindStringSubmatch(r.System); m != nil {
-			name = m[1]
-		}
-
-		if m := roundPattern.FindStringSubmatch(r.Prompt); m != nil {
-			round = m[1]
-		}
-
-		take := "take"
-		if strings.Contains(r.Prompt, "Breaking news") {
-			take = "take on the study"
-		}
-
-		return stiggytest.Response{Calls: []stiggytest.Call{{
-			Tool: "post", Args: map[string]any{"text": fmt.Sprintf("%s's %s, round %s.", name, take, round)},
-		}}}
-	default:
-		return stiggytest.Response{Text: "Posted."}
+// newModel is gemma4:cloud through a local Ollama. Cloud models answer 429
+// to concurrent requests, so calls go one at a time and failed ones are
+// retried.
+func newModel() spec.Model {
+	return spec.Model{
+		Instance:  openai.New("ollama", openai.WithOllamaBaseURL(), openai.WithModel("gemma4:cloud")),
+		Retries:   5,
+		RateLimit: &spec.RateLimit{MaxConcurrent: 1},
 	}
 }
 
-func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+func run(ctx context.Context, nc *nats.Conn, model spec.Model, out io.Writer) error {
 	f, src, err := config.Parse([]byte(fleet))
 	if err != nil {
 		return fmt.Errorf("%s", strings.Join(src.Describe(err), "\n"))
@@ -434,28 +393,51 @@ func run(ctx context.Context, nc *nats.Conn, out io.Writer) error {
 		return err
 	}
 
-	model, desc := exutil.Model(stiggytest.Model(fake))
-	fmt.Fprintln(out, "model:", desc)
+	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	app, err := stiggy.New(nc, stiggy.WithFleet(f), stiggy.WithModelSpec("main", model),
-		stiggy.WithTool("world", tools...), stiggy.WithActivity("tick", tick), stiggy.WithLogger(exutil.Quiet()))
+		stiggy.WithTool("world", tools...), stiggy.WithActivity("tick", tick), stiggy.WithLogger(quiet))
 	if err != nil {
 		return err
 	}
 
-	stopApp, err := exutil.Serve(ctx, app)
-	if err != nil {
+	// Run serves the fleet until ctx ends; Ready says when it can take work.
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-app.Ready():
+	case err = <-done:
+		cancel()
+
 		return err
 	}
-	defer stopApp() //nolint:errcheck // shutdown at the end of the example
 
-	st, err := exutil.RunFlow(ctx, app, "simulate", map[string]any{
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	id, err := app.Client().Start(ctx, "simulate", map[string]any{
 		"news":   "The city will ban cars from the historic centre next spring.",
 		"size":   3,
 		"rounds": 2,
-	}, out)
+	})
 	if err != nil {
 		return err
+	}
+
+	st, err := app.Client().Wait(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "execution %s: %s\n", id, st.Status)
+
+	if st.Status != packtrail.StatusCompleted {
+		return fmt.Errorf("execution %s: %s %s", id, st.Reason, st.Error)
 	}
 
 	if err = printRun(out, st, true); err != nil {

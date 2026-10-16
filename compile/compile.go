@@ -213,6 +213,13 @@ func (c *compiler) models() {
 			c.errorf(path+".retries", "must not be negative")
 		}
 
+		switch {
+		case m.RetryBackoff < 0:
+			c.errorf(path+".retry_backoff", "must not be negative")
+		case m.RetryBackoff > 0 && m.Retries == 0:
+			c.errorf(path+".retry_backoff", "needs retries")
+		}
+
 		if r := m.RateLimit; r != nil {
 			switch {
 			case r.RequestsPerMinute < 0 || r.MaxConcurrent < 0:

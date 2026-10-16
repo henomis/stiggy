@@ -15,14 +15,51 @@
 package main
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
+// fake stands in for a real model: triage routes on keywords, the
+// specialists answer in their own voice.
+func fake(r stiggytest.Request) stiggytest.Response {
+	switch {
+	case strings.Contains(r.System, "Triage"):
+		if len(r.ToolResults) > 0 {
+			return stiggytest.Response{Text: "routed"}
+		}
+
+		ticket, _, _ := strings.Cut(r.Prompt, "\n")
+
+		target := "route_to_tech"
+		if strings.Contains(strings.ToLower(ticket), "invoice") {
+			target = "route_to_billing"
+		}
+
+		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: target, Args: map[string]any{"reason": "keyword"}}}}
+	case strings.Contains(r.System, "Billing"):
+		return stiggytest.Response{Text: "Billing here: your invoice has been corrected."}
+	default:
+		return stiggytest.Response{Text: "Tech here: try restarting the service."}
+	}
+}
+
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Model(fake)}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		if !strings.Contains(out, "→ billing") || !strings.Contains(out, "→ tech") {
 			t.Fatalf("output:\n%s", out)
 		}

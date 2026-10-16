@@ -136,6 +136,36 @@ func (s *Source) Describe(err error) []string {
 	return out
 }
 
+// Problem is one problem of a fleet, located for tools that show it next to
+// the offending key rather than as a line of text.
+type Problem struct {
+	// Path is the dotted path of the key ([spec.Error.Path]); empty when the
+	// problem is not tied to one.
+	Path string `json:"path,omitempty"`
+	// Line is the line of Path, or of its closest ancestor; 0 when unknown.
+	Line int `json:"line,omitempty"`
+	// Msg is the problem without its path.
+	Msg string `json:"msg"`
+}
+
+// Problems flattens err into one [Problem] per problem, like [Source.Describe].
+func (s *Source) Problems(err error) []Problem {
+	var out []Problem
+
+	for _, e := range leaves(err) {
+		var se *spec.Error
+		if !errors.As(e, &se) {
+			out = append(out, Problem{Msg: e.Error()})
+
+			continue
+		}
+
+		out = append(out, Problem{Path: se.Path, Line: s.Line(se.Path), Msg: se.Msg})
+	}
+
+	return out
+}
+
 func (s *Source) position(path string) string {
 	name := "<input>"
 	if s != nil && s.Filename != "" {

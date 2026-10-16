@@ -208,3 +208,42 @@ func TestVersionFromLdflags(t *testing.T) {
 		t.Fatalf("out = %q", out)
 	}
 }
+
+func TestDesignArgs(t *testing.T) {
+	if _, _, err := runCLI(t, "design", "a.yaml", "b.yaml"); !errors.Is(err, errUsage) {
+		t.Fatalf("two files: %v", err)
+	}
+
+	if _, _, err := runCLI(t, "design", "-ui", filepath.Join(t.TempDir(), "missing")); err == nil ||
+		!strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("missing -ui: %v", err)
+	}
+}
+
+func TestFleetPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"news.stiggy.json": "news.yaml",
+		"dir/news.json":    "dir/news.yaml",
+		"news":             "news.yaml",
+	} {
+		if got := fleetPath(in); got != want {
+			t.Errorf("fleetPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDesignServes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var out, errOut bytes.Buffer
+
+	done := make(chan error, 1)
+
+	go func() { done <- run(ctx, []string{"design", "-addr", "127.0.0.1:0", fixture}, &out, &errOut) }()
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("design: %v (%s)", err, errOut.String())
+	}
+}

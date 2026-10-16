@@ -199,8 +199,12 @@ func (a *App) start(ctx, engCtx context.Context, engWG, wkWG, srvWG *sync.WaitGr
 			return fmt.Errorf("stiggy: %w", err)
 		}
 
-		if err := a.startEngine(ctx, engCtx, engWG, errc); err != nil {
-			return err
+		// A fleet without flows only serves agents: an engine would have
+		// nothing to drive, so none is started and nothing is provisioned.
+		if len(a.plan.Flows) > 0 {
+			if err := a.startEngine(ctx, engCtx, engWG, errc); err != nil {
+				return err
+			}
 		}
 	}
 

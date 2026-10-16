@@ -77,6 +77,26 @@ st, _ := app.Client().Wait(ctx, id)
 `app.Client()` is a packtrail client: signal, resume, update, fork, rerun,
 watch and stream progress from it.
 
+## Designer
+
+`stiggy design` builds workflows in the browser from blocks: Start, AI Agent,
+AI Router, Loop over items, Condition, Parallel and Merge, Human approval,
+Run workflow, Agent team, Output, and the tools and knowledge bases an agent
+can use. Drag blocks onto the canvas, connect them, and insert values from
+earlier blocks into prompts. The project is saved as `*.stiggy.json`, and
+every save also writes the fleet it compiles to, checked by the same loader
+and compiler as `stiggy validate`. The designer never touches NATS.
+
+```bash
+make ui                                        # build the page (needs Node)
+stiggy design -ui ui/dist news.stiggy.json     # http://127.0.0.1:7357
+stiggy run news.yaml                           # the generated fleet
+```
+
+Model providers (top bar, **Providers**) name a service such as OpenAI or
+Ollama and the environment variable that holds its API key; keys are never
+stored in the project or the fleet.
+
 ## How it works
 
 ```
@@ -100,9 +120,9 @@ watch and stream progress from it.
 
 ## Documentation
 
-- [Reference](https://simonevellei.com/stiggy/docs.html): the fleet file,
+- [Guide](https://simonevellei.com/stiggy/guide.html): the fleet file,
   flows, crews and patterns, the CLI and the Go library (source:
-  [web/docs.html](web/docs.html)).
+  [web/guide.html](web/guide.html)).
 - [examples/](examples): runnable programs (below).
 
 ## Examples
@@ -111,24 +131,27 @@ watch and stream progress from it.
 |---|---|
 | [hello](examples/hello) | The smallest YAML fleet |
 | [router](examples/router) | Agent-chosen routing, built with the Go API |
+| [translator](examples/translator) | An agent served on its own, without a workflow (`translator/`), used by two separate workflow programs as a remote step (`support/`, `newsletter/`) |
 | [mapreduce](examples/mapreduce) | Structured output, a parallel map, an append channel |
 | [hitl](examples/hitl) | `ask_human` and human review, resumed with `Client.Resume` |
 | [crew](examples/crew) | A crew with a guardrail, also served as a protocol agent |
 | [remote](examples/remote) | Another team's phero agent as a step and as a delegate |
 | [socialsim](examples/socialsim) | A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (`JobFromContext`), rounds in a loop, and a what-if fork with breaking news |
 
-Each runs against `$NATS_URL`, with a real model when `OLLAMA_MODEL`,
-`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set (in that order), and a scripted
-one otherwise:
+Each example is a plain program, written the way you would write your own:
+it connects to the NATS server at `$NATS_URL` (default
+`nats://127.0.0.1:4222`, with JetStream) and uses `gemma4:cloud` through a
+local Ollama:
 
 ```bash
+nats-server -js &
 go run ./examples/router
-OLLAMA_MODEL=llama3.2-eco go run ./examples/mapreduce
 ```
 
-The examples are tests too. `make examples` runs them with the scripted
-models on an embedded server. `make examples-live` runs them against a real
-model, by default `OLLAMA_MODEL=llama3.2-eco`.
+The examples are tests too: each test supplies scripted models
+(`stiggytest`) through the example's `run` function. `make examples` runs
+them and checks the output exactly; `make examples-live` runs them against
+`gemma4:cloud`. Both use the server at `$NATS_URL` and skip without one.
 
 ## Deployment
 
@@ -140,6 +163,19 @@ stiggy run fleet.yaml -role workers -http :8080                # scale out
 stiggy run fleet.yaml -role workers -only researcher,writer    # dedicated hosts
 ```
 
+A fleet without flows, one that only exposes agents, starts no engine and
+provisions nothing in NATS, so it needs no `-role`.
+
+`stiggy agents` lists the agents on the bus, and `stiggy ask` prompts one:
+
+```bash
+stiggy agents -owner newsroom
+stiggy ask -owner newsroom writer "Write two lines about NATS."
+```
+
+`ask` is a plain request over the NATS Agent Protocol: it stores nothing in
+NATS. `-owner` is needed only when several owners serve the same name.
+
 `/healthz` and `/readyz` serve health checks. [deploy/](deploy) has a
 Dockerfile and a docker-compose setup. To operate executions, use
 `stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
@@ -149,11 +185,15 @@ or packtrail's CLI and `packtrail-ui` on the fleet's namespace.
 
 ```bash
 make test           # tests with -race
-make check          # test + examples + lint + vet
-make examples       # the examples, scripted
-make examples-live  # the examples, against a real model
+make check          # test + lint + vet
+make examples       # the examples, scripted (needs nats-server -js)
+make examples-live  # the examples, against gemma4:cloud
 make e2e            # end-to-end scenarios against a real model and Qdrant
+make ui             # the designer page (Node), into ui/dist
 ```
+
+For work on the designer, run `stiggy design my.stiggy.json` and, in `ui/`,
+`npm run dev`: Vite serves the page with live reload and proxies `/api` to it.
 
 [e2e/](e2e) runs whole fleets against a real model through Ollama
 (`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce

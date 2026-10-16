@@ -18,9 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
@@ -186,7 +188,12 @@ func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM
 	}
 
 	if m.Retries > 0 {
-		mw, err := middleware.NewRetry(m.Retries + 1)
+		opts := []middleware.RetryOption{middleware.WithShouldRetry(transient)}
+		if m.RetryBackoff > 0 {
+			opts = append(opts, middleware.WithInitialBackoff(time.Duration(m.RetryBackoff)))
+		}
+
+		mw, err := middleware.NewRetry(m.Retries+1, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("model %q: retries: %w", name, err)
 		}
@@ -199,6 +206,26 @@ func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM
 	}
 
 	return llm.Use(l, mws...), nil
+}
+
+// transient reports whether a failed model call may succeed when retried. A
+// provider's 4xx answer is permanent (a bad request or key fails again the
+// same way), except a timeout (408) and a rate limit (429); anything else,
+// a 5xx or a network error, is worth another try.
+func transient(err error) bool {
+	var pe *llm.ProviderError
+	if !errors.As(err, &pe) {
+		return true
+	}
+
+	switch {
+	case pe.StatusCode == http.StatusRequestTimeout, pe.StatusCode == http.StatusTooManyRequests:
+		return true
+	case pe.StatusCode >= http.StatusBadRequest && pe.StatusCode < http.StatusInternalServerError:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *assembly) tool(ctx context.Context, name string) ([]*llm.Tool, error) {

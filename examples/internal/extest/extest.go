@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package extest runs an example against an embedded NATS server, so the
-// examples are tested like the rest of the code.
+// Package extest runs an example's program against the NATS server at
+// $NATS_URL (default nats://127.0.0.1:4222), which must run with JetStream:
+// nats-server -js. Without a reachable server the example is skipped.
 //
-// By default the model environment is cleared and the examples use their
-// scripted models, so the output is checked exactly. With
-// STIGGY_EXAMPLE_LIVE=1 the environment is kept (OLLAMA_MODEL=llama3.2-eco,
-// OPENAI_API_KEY, ...): the examples run against a real model, the output is
-// logged, and only success is required, since a real model's words vary.
+// By default the examples use the scripted models their tests supply, so
+// the output is checked exactly. With STIGGY_EXAMPLE_LIVE=1 they use their
+// real models (Ollama serving gemma4:cloud): the output is logged, and
+// only success is required, since a real model's words vary.
 package extest
 
 import (
@@ -32,7 +32,9 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/henomis/packtrail/packtrailtest"
+	"github.com/henomis/phero/v2/agent"
+	"github.com/henomis/phero/v2/llm"
+	natsagent "github.com/henomis/phero/v2/nats"
 )
 
 // timeout bounds one example run (generous for real models).
@@ -41,24 +43,37 @@ const timeout = 5 * time.Minute
 // Live reports whether examples run against a real model.
 func Live() bool { return os.Getenv("STIGGY_EXAMPLE_LIVE") == "1" }
 
-// Run calls run with an embedded server, then check with what it printed
-// (only in scripted mode; live output is logged instead).
+// Connect dials $NATS_URL for the test, or skips it when no server answers.
+func Connect(t *testing.T) *nats.Conn {
+	t.Helper()
+
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	nc, err := nats.Connect(url, nats.Name("stiggy-example-test"))
+	if err != nil {
+		t.Skipf("no NATS at %s (start nats-server -js): %v", url, err)
+	}
+
+	t.Cleanup(nc.Close)
+
+	return nc
+}
+
+// Run calls run with a connection to $NATS_URL, then check with what it
+// printed (only in scripted mode; live output is logged instead).
 func Run(t *testing.T, run func(ctx context.Context, nc *nats.Conn, out io.Writer) error, check func(out string)) {
 	t.Helper()
 
-	if !Live() {
-		for _, k := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_MODEL"} {
-			t.Setenv(k, "")
-		}
-	}
-
-	srv := packtrailtest.Start(t)
+	nc := Connect(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	var out bytes.Buffer
-	if err := run(ctx, srv.Connect(t), &out); err != nil {
+	if err := run(ctx, nc, &out); err != nil {
 		t.Fatalf("%v\noutput so far:\n%s", err, out.String())
 	}
 
@@ -69,4 +84,39 @@ func Run(t *testing.T, run func(ctx context.Context, nc *nats.Conn, out io.Write
 	}
 
 	check(out.String())
+}
+
+// Agent serves a plain phero agent on the NATS Agent Protocol as
+// owner/name until the test ends: a stand-in for another program on the
+// bus that an example reaches as a remote.
+func Agent(t *testing.T, nc *nats.Conn, owner, name, description string, model llm.LLM) {
+	t.Helper()
+
+	a, err := agent.New(model, name, description)
+	if err != nil {
+		t.Fatalf("agent %s/%s: %v", owner, name, err)
+	}
+
+	srv, err := natsagent.New(nc, a, owner, name)
+	if err != nil {
+		t.Fatalf("agent %s/%s: %v", owner, name, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Start(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	select {
+	case <-srv.Ready():
+	case err = <-done:
+		t.Fatalf("agent %s/%s: %v", owner, name, err)
+	case <-time.After(timeout):
+		t.Fatalf("agent %s/%s: not ready in time", owner, name)
+	}
 }

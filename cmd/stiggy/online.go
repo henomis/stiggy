@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -37,11 +38,21 @@ import (
 	"github.com/henomis/stiggy/spec"
 )
 
-// tablePadding separates the columns of tabular output.
-const tablePadding = 2
+const (
+	// tablePadding separates the columns of tabular output.
+	tablePadding = 2
+	// askArgs is the least ask needs: the agent and one word of prompt.
+	askArgs = 2
+)
 
-// errExecution means the execution ended without completing.
-var errExecution = errors.New("execution did not complete")
+var (
+	// errExecution means the execution ended without completing.
+	errExecution = errors.New("execution did not complete")
+	// errNoAgent means no agent on the bus matches the one asked for.
+	errNoAgent = errors.New("no such agent")
+	// errAmbiguousAgent means several owners serve an agent of that name.
+	errAmbiguousAgent = errors.New("several owners serve this agent")
+)
 
 type connFlags struct {
 	server string
@@ -264,4 +275,83 @@ func cmdAgents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 
 	return tw.Flush()
+}
+
+// cmdAsk prompts an agent on the NATS Agent Protocol and prints its answer:
+// a one-off request over core NATS, nothing is stored.
+func cmdAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	var cf connFlags
+
+	fs := newFlagSet(cmdNameAsk, stderr)
+	cf.register(fs)
+	owner := fs.String("owner", "", "owner of the agent; needed when several owners serve the name")
+
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+
+	if len(pos) < askArgs {
+		fs.Usage()
+
+		return errUsage
+	}
+
+	name, prompt := pos[0], strings.Join(pos[1:], " ")
+
+	nc, err := cf.connect()
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	opts := []natsagent.DiscoverOption{natsagent.FilterByName(name)}
+	if *owner != "" {
+		opts = append(opts, natsagent.FilterByOwner(*owner))
+	}
+
+	handles, err := natsagent.NewClient(nc).Discover(ctx, opts...)
+	if errors.Is(err, natsagent.ErrNoAgentsFound) {
+		return fmt.Errorf("%w: %s (see stiggy agents)", errNoAgent, agentLabel(*owner, name))
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Replicas share an owner and a name; different owners are different
+	// agents.
+	owners := map[string]bool{}
+	for _, h := range handles {
+		owners[h.Owner] = true
+	}
+
+	if len(owners) > 1 {
+		return fmt.Errorf("%w %s: %s; pick one with -owner", errAmbiguousAgent, name,
+			strings.Join(slices.Sorted(maps.Keys(owners)), ", "))
+	}
+
+	stream, err := handles[0].Prompt(ctx, prompt)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	text, err := stream.Text(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: %w", agentLabel(handles[0].Owner, name), err)
+	}
+
+	_, err = fmt.Fprintln(stdout, text)
+
+	return err
+}
+
+// agentLabel is owner/name, or the name alone without an owner.
+func agentLabel(owner, name string) string {
+	if owner == "" {
+		return name
+	}
+
+	return owner + "/" + name
 }

@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
+.PHONY: all build ui test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
 
 # Variables
 GO := go
@@ -16,6 +16,7 @@ all: test lint
 help:
 	@echo "Available targets:"
 	@echo "  make build       - Build the stiggy binary into bin/ (honors GOOS/GOARCH)"
+	@echo "  make ui          - Build the designer page into ui/dist (needs Node; not part of build)"
 	@echo "  make test        - Run all tests"
 	@echo "  make guard       - Run only the no-direct-NATS architecture guard"
 	@echo "  make lint        - Run golangci-lint"
@@ -26,9 +27,9 @@ help:
 	@echo "  make coverage    - Generate test coverage report"
 	@echo "  make clean       - Clean build artifacts and cache"
 	@echo "  make license     - Add license headers to all Go files"
-	@echo "  make check       - Run test + examples + lint + vet"
-	@echo "  make examples    - Run the examples with their scripted models"
-	@echo "  make examples-live - Run the examples against a real model (OLLAMA_MODEL=llama3.2-eco by default)"
+	@echo "  make check       - Run test + lint + vet"
+	@echo "  make examples    - Run the examples with their scripted models (needs nats-server -js at $$NATS_URL)"
+	@echo "  make examples-live - Run the examples against gemma4:cloud through Ollama"
 	@echo "  make e2e         - Run the end-to-end tests against a real model and Qdrant (STIGGY_E2E_MODEL=gemma4:cloud by default; E2E_RUN=regexp)"
 	@echo "  make e2e-up      - Start the services the e2e tests need (Qdrant)"
 	@echo "  make e2e-down    - Stop them"
@@ -38,6 +39,10 @@ help:
 build:
 	@echo "Building $(BIN_DIR)/stiggy..."
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN_DIR)/stiggy ./cmd/stiggy
+
+## ui: Build the designer page served by `stiggy design -ui ui/dist` (needs Node)
+ui:
+	cd ui && npm ci && npm test && npm run build
 
 ## test: Run all tests (excluding examples)
 test:
@@ -91,14 +96,15 @@ license:
 	find . -type f -name '*.go' \
 		-exec addlicense -c "Simone Vellei" -l apache {} +
 
-## examples: Run every example on an embedded server with scripted models
+## examples: Run every example with its scripted models against $NATS_URL (nats-server -js);
+## examples without a reachable server are skipped. CI only compiles them (lint).
 examples:
 	$(GO) test -count=1 ./examples/...
 
-## examples-live: Run every example against a real model and log the output
-OLLAMA_MODEL ?= llama3.2-eco
+## examples-live: Run every example against gemma4:cloud (Ollama), one package at a time
+## (cloud models answer 429 to concurrent requests), and log the output
 examples-live:
-	STIGGY_EXAMPLE_LIVE=1 OLLAMA_MODEL=$(OLLAMA_MODEL) $(GO) test -count=1 -v -timeout 30m ./examples/...
+	STIGGY_EXAMPLE_LIVE=1 $(GO) test -count=1 -v -p 1 -timeout 30m ./examples/...
 
 ## e2e-up: Start the services the e2e tests need (Qdrant) and wait for them
 E2E_COMPOSE := docker compose -f e2e/docker-compose.yaml
@@ -117,6 +123,6 @@ E2E_RUN ?= .
 e2e: e2e-up
 	STIGGY_E2E=1 STIGGY_E2E_MODEL=$(STIGGY_E2E_MODEL) $(GO) test -count=1 -v -p 1 -timeout 60m -run '$(E2E_RUN)' ./e2e/
 
-## check: Run all checks (test + examples + lint + vet)
-check: test examples lint vet
+## check: Run all checks (test + lint + vet)
+check: test lint vet
 	@echo "All checks passed!"

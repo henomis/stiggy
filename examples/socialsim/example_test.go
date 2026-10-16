@@ -15,14 +15,91 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"io"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
+	"github.com/henomis/phero/v2/llm"
+
 	"github.com/henomis/stiggy/examples/internal/extest"
+	"github.com/henomis/stiggy/spec"
+	"github.com/henomis/stiggy/stiggytest"
 )
 
+var (
+	rolePattern  = regexp.MustCompile(`Role: (.+)`)
+	roundPattern = regexp.MustCompile(`Round (\d+)`)
+)
+
+// toolTurns counts the tool results of the current run: those after the
+// last user message (earlier ones come from the persona's memory).
+func toolTurns(msgs []llm.Message) int {
+	n := 0
+
+	for _, m := range msgs {
+		switch m.Role {
+		case llm.RoleUser:
+			n = 0
+		case llm.RoleTool:
+			n++
+		}
+	}
+
+	return n
+}
+
+// fake scripts the three agents: the director casts three people, each
+// persona reads the feed and posts, the analyst sums up.
+func fake(r stiggytest.Request) stiggytest.Response {
+	switch turns := toolTurns(r.Messages); {
+	case r.Schema:
+		return stiggytest.Response{Text: `{"personas": [
+			{"name": "Ada", "bio": "A cyclist and nurse.", "stance": "for the ban"},
+			{"name": "Bo", "bio": "A taxi driver.", "stance": "against the ban"},
+			{"name": "Cy", "bio": "A shop owner downtown.", "stance": "undecided"}]}`}
+	case strings.Contains(r.System, "Role: Analyst") && strings.Contains(r.Prompt, "Breaking news"):
+		return stiggytest.Response{Text: "The sales study moved Bo and Cy towards the ban in round 2."}
+	case strings.Contains(r.System, "Role: Analyst"):
+		return stiggytest.Response{Text: "Ada and Bo held their ground; Cy moved towards Ada after round 1."}
+	case turns == 0:
+		return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "read_feed", Args: map[string]any{}}}}
+	case turns == 1:
+		name, round := "someone", "?"
+		if m := rolePattern.FindStringSubmatch(r.System); m != nil {
+			name = m[1]
+		}
+
+		if m := roundPattern.FindStringSubmatch(r.Prompt); m != nil {
+			round = m[1]
+		}
+
+		take := "take"
+		if strings.Contains(r.Prompt, "Breaking news") {
+			take = "take on the study"
+		}
+
+		return stiggytest.Response{Calls: []stiggytest.Call{{
+			Tool: "post", Args: map[string]any{"text": fmt.Sprintf("%s's %s, round %s.", name, take, round)},
+		}}}
+	default:
+		return stiggytest.Response{Text: "Posted."}
+	}
+}
+
 func TestExample(t *testing.T) {
-	extest.Run(t, run, func(out string) {
+	model := spec.Model{Instance: stiggytest.Model(fake)}
+	if extest.Live() {
+		model = newModel()
+	}
+
+	extest.Run(t, func(ctx context.Context, nc *nats.Conn, out io.Writer) error {
+		return run(ctx, nc, model, out)
+	}, func(out string) {
 		for _, w := range []string{
 			"timeline (6 posts):",
 			"[round 1] Ada: Ada's take, round 1.",

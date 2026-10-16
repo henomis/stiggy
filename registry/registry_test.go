@@ -78,6 +78,7 @@ func TestModels(t *testing.T) {
 	for _, m := range []spec.Model{
 		{Provider: "openai", Model: "gpt-4o-mini", APIKey: "k", Temperature: &temp},
 		{Provider: "anthropic", MaxTokens: 1000},
+		{Provider: "google", Model: "gemini-3.5-flash", APIKey: "k", MaxTokens: 1000, Temperature: &temp},
 		{Provider: "ollama", Model: "llama3"},
 	} {
 		if _, err := r.BuildModel("m", m); err != nil {

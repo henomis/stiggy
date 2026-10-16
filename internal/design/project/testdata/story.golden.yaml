@@ -1,0 +1,91 @@
+namespace: newsroom
+models:
+  gpt_4o_mini:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+  gpt_4o_mini_2:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+    temperature: 0.7
+agents:
+  plan:
+    model: gpt_4o_mini
+    system: You are an editor.
+  research:
+    model: gpt_4o_mini
+    system: You are a researcher.
+    memory: execution
+  write:
+    model: gpt_4o_mini_2
+    system: You are a writer.
+  fact_check:
+    model: gpt_4o_mini
+    system: You check facts.
+flows:
+  story:
+    start: plan
+    output: '{article: results.write.text, topic: input.topic, status: "approved"}'
+    nodes:
+      - id: plan
+        type: task
+        agent: plan
+        prompt: 'Plan coverage of {{.input.topic}}: three angles.'
+        output_schema:
+          type: object
+          properties:
+            angles:
+              type: array
+              items:
+                type: string
+              description: Angles to research
+          required: [angles]
+        next: research
+      - id: research
+        type: map
+        over: results.plan.angles
+        max_parallel: 3
+        agent: research
+        prompt: Research {{json .item}} for {{.input.topic}}.
+        next: write
+      - id: write
+        type: task
+        agent: write
+        prompt: Write about {{.input.topic}} from {{json .results.research}}.
+        next: fact_check
+      - id: fact_check
+        type: task
+        agent: fact_check
+        prompt: 'Check: {{.results.write.text}}'
+        output_schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+            issues:
+              type: string
+          required: [ok, issues]
+        next: accurate
+      - id: accurate
+        type: choice
+        rules:
+          - when: results.fact_check.ok == true
+            to: sign_off
+          - default: true
+            to: write
+      - id: sign_off
+        type: await
+        signal: sign_off
+        timeout: 48h
+        on_timeout: sign_off_decision
+        meta:
+          message: Publish this article?
+        next: sign_off_decision
+      - id: sign_off_decision
+        type: choice
+        rules:
+          - when: signals.sign_off?.approved == true
+            to: $end
+          - default: true
+            to: $end
