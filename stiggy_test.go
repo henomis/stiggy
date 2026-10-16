@@ -28,6 +28,7 @@ import (
 	"github.com/henomis/packtrail/packtrailtest"
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/llm"
+	natsagent "github.com/henomis/phero/v2/nats"
 
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/config"
@@ -233,6 +234,63 @@ func TestSplitRoles(t *testing.T) {
 		if rerr := <-done; rerr != nil {
 			t.Errorf("run: %v", rerr)
 		}
+	}
+}
+
+// TestAgentsOnlyFleetRunsNoEngine: a fleet without flows only serves its
+// agents, so the default role starts no engine and provisions nothing.
+func TestAgentsOnlyFleetRunsNoEngine(t *testing.T) {
+	srv := packtrailtest.Start(t)
+	nc := srv.Connect(t)
+
+	app, err := stiggy.New(nc,
+		stiggy.WithNamespace("agents-only"),
+		stiggy.WithModel("m", stiggytest.Echo("echo: ")),
+		stiggy.WithAgent("a", spec.Agent{Model: "m"}),
+		stiggy.WithExpose(spec.Expose{Owner: "o", Agents: []string{"a"}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), stiggytest.Timeout)
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-app.Ready():
+	case err = <-done:
+		t.Fatalf("stopped before ready: %v", err)
+	}
+
+	handles, err := natsagent.NewClient(nc).Discover(ctx, natsagent.FilterByOwner("o"))
+	if err != nil || len(handles) != 1 {
+		t.Fatalf("discover: %v %v", handles, err)
+	}
+
+	stream, err := handles[0].Prompt(ctx, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := stream.Text(ctx)
+	stream.Close()
+
+	if err != nil || answer != "echo: hi" {
+		t.Fatalf("answer %q, %v", answer, err)
+	}
+
+	if flows, ferr := app.Client().Flows(ctx); ferr == nil {
+		t.Fatalf("namespace provisioned (flows %v): no engine should have run", flows)
+	}
+
+	cancel()
+
+	if err = <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

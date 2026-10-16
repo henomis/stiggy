@@ -163,6 +163,9 @@ stiggy run fleet.yaml -role workers -http :8080                # scale out
 stiggy run fleet.yaml -role workers -only researcher,writer    # dedicated hosts
 ```
 
+A fleet without flows, one that only exposes agents, starts no engine and
+provisions nothing in NATS, so it needs no `-role`.
+
 `/healthz` and `/readyz` serve health checks. [deploy/](deploy) has a
 Dockerfile and a docker-compose setup. To operate executions, use
 `stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
