@@ -94,6 +94,9 @@ type Model struct {
 	// Retries is how many times a failed call is retried (phero's retry
 	// middleware, with exponential back-off), on top of the step's retries.
 	Retries int `yaml:"retries,omitempty" json:"retries,omitempty"`
+	// RetryBackoff is the wait before the first retry; it doubles on each
+	// retry, up to 30s. 0 keeps phero's default (500ms). Only with Retries.
+	RetryBackoff flow.Duration `yaml:"retry_backoff,omitempty" json:"retry_backoff,omitempty"`
 	// RateLimit caps the calls to this model. It applies
 	// per process: each worker process has its own budget.
 	RateLimit *RateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`

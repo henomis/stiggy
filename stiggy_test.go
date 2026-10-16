@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -434,6 +435,60 @@ func TestModelRetriesAndRateLimit(t *testing.T) {
 	st := h.Run(t, "f", map[string]any{})
 	if st.Status != packtrail.StatusCompleted || calls.Load() != 2 {
 		t.Fatalf("status %s (%s), calls %d", st.Status, st.Error, calls.Load())
+	}
+}
+
+// TestModelRetriesSkipPermanentErrors checks a model's retries wait the
+// configured backoff before retrying a transient failure (503), and do not
+// retry a permanent one (400), which would fail the same way.
+func TestModelRetriesSkipPermanentErrors(t *testing.T) {
+	for _, tt := range []struct {
+		status    int
+		completed bool
+		calls     int64
+	}{
+		{http.StatusServiceUnavailable, true, 2},
+		{http.StatusBadRequest, false, 1},
+	} {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			var (
+				calls atomic.Int64
+				first time.Time
+				gap   time.Duration
+			)
+
+			failOnce := llm.Func(func(ctx context.Context, msgs []llm.Message, opts ...llm.CallOption) (*llm.Result, error) {
+				if calls.Add(1) == 1 {
+					first = time.Now()
+					return nil, &llm.ProviderError{Provider: "test", StatusCode: tt.status, Err: errors.New("provider error")}
+				}
+
+				gap = time.Since(first)
+
+				return stiggytest.Echo("ok: ").Execute(ctx, msgs, opts...)
+			})
+
+			step, err := stiggy.AgentTask("s", "a", spec.Step{Prompt: "go"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			h := stiggytest.Start(t,
+				stiggy.WithModelSpec("m", spec.Model{Instance: failOnce, Retries: 3, RetryBackoff: flow.Duration(200 * time.Millisecond)}),
+				stiggy.WithAgent("a", spec.Agent{Model: "m"}),
+				stiggy.WithFlow(&flow.Flow{Name: "f", Nodes: []flow.Node{step}}),
+			)
+
+			st := h.Run(t, "f", map[string]any{})
+			if (st.Status == packtrail.StatusCompleted) != tt.completed || calls.Load() != tt.calls {
+				t.Fatalf("status %s (%s), calls %d", st.Status, st.Error, calls.Load())
+			}
+
+			// The backoff has a ±25% jitter.
+			if tt.completed && gap < 150*time.Millisecond {
+				t.Errorf("retried after %v, want about 200ms", gap)
+			}
+		})
 	}
 }
 

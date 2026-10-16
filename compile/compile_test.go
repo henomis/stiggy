@@ -435,6 +435,18 @@ models:
 			},
 		},
 		{
+			name: "model retries",
+			yaml: `
+models:
+  negative: {provider: openai, retries: 2, retry_backoff: -1s}
+  lonely: {provider: openai, retry_backoff: 5s}
+`,
+			want: []string{
+				`3: models.negative.retry_backoff: must not be negative`,
+				`4: models.lonely.retry_backoff: needs retries`,
+			},
+		},
+		{
 			name: "crew and pattern retries",
 			yaml: `
 models: {m: {provider: openai}}
