@@ -77,6 +77,26 @@ st, _ := app.Client().Wait(ctx, id)
 `app.Client()` is a packtrail client: signal, resume, update, fork, rerun,
 watch and stream progress from it.
 
+## Designer
+
+`stiggy design` builds workflows in the browser from blocks: Start, AI Agent,
+AI Router, Loop over items, Condition, Parallel and Merge, Human approval,
+Run workflow, Agent team, Output, and the tools and knowledge bases an agent
+can use. Drag blocks onto the canvas, connect them, and insert values from
+earlier blocks into prompts. The project is saved as `*.stiggy.json`, and
+every save also writes the fleet it compiles to, checked by the same loader
+and compiler as `stiggy validate`. The designer never touches NATS.
+
+```bash
+make ui                                        # build the page (needs Node)
+stiggy design -ui ui/dist news.stiggy.json     # http://127.0.0.1:7357
+stiggy run news.yaml                           # the generated fleet
+```
+
+Model providers (top bar, **Providers**) name a service such as OpenAI or
+Ollama and the environment variable that holds its API key; keys are never
+stored in the project or the fleet.
+
 ## How it works
 
 ```
@@ -153,7 +173,11 @@ make check          # test + examples + lint + vet
 make examples       # the examples, scripted
 make examples-live  # the examples, against a real model
 make e2e            # end-to-end scenarios against a real model and Qdrant
+make ui             # the designer page (Node), into ui/dist
 ```
+
+For work on the designer, run `stiggy design my.stiggy.json` and, in `ui/`,
+`npm run dev`: Vite serves the page with live reload and proxies `/api` to it.
 
 [e2e/](e2e) runs whole fleets against a real model through Ollama
 (`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce

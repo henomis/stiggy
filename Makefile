@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
+.PHONY: all build ui test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
 
 # Variables
 GO := go
@@ -16,6 +16,7 @@ all: test lint
 help:
 	@echo "Available targets:"
 	@echo "  make build       - Build the stiggy binary into bin/ (honors GOOS/GOARCH)"
+	@echo "  make ui          - Build the designer page into ui/dist (needs Node; not part of build)"
 	@echo "  make test        - Run all tests"
 	@echo "  make guard       - Run only the no-direct-NATS architecture guard"
 	@echo "  make lint        - Run golangci-lint"
@@ -38,6 +39,10 @@ help:
 build:
 	@echo "Building $(BIN_DIR)/stiggy..."
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN_DIR)/stiggy ./cmd/stiggy
+
+## ui: Build the designer page served by `stiggy design -ui ui/dist` (needs Node)
+ui:
+	cd ui && npm ci && npm test && npm run build
 
 ## test: Run all tests (excluding examples)
 test:

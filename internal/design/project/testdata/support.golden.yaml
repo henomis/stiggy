@@ -1,0 +1,130 @@
+namespace: support
+models:
+  gpt_4o_mini:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+  gpt_4o:
+    provider: openai
+    model: gpt-4o
+    api_key: ${OPENAI_API_KEY}
+  llama3_2:
+    provider: ollama
+    model: llama3.2
+embedders:
+  nomic_embed_text:
+    provider: ollama
+    model: nomic-embed-text
+vectorstores:
+  product_docs_store:
+    type: qdrant
+    collection: manual
+    host: localhost
+    vector_size: 768
+knowledge:
+  product_docs:
+    embedder: nomic_embed_text
+    vectorstore: product_docs_store
+    description: The product manual
+    sources:
+      - path: docs/*.md
+        chunk_size: 800
+tools:
+  workspace_file_read:
+    type: file_read
+    working_dir: /srv/support
+  workspace_glob:
+    type: glob
+    working_dir: /srv/support
+  workspace_grep:
+    type: grep
+    working_dir: /srv/support
+agents:
+  triage:
+    model: gpt_4o_mini
+    system: You triage support questions.
+  lead:
+    model: gpt_4o
+    system: You coordinate.
+  searcher:
+    model: gpt_4o_mini
+    system: You search.
+  writer:
+    model: gpt_4o_mini
+    system: You write answers.
+  docs_answer:
+    model: llama3_2
+    system: Answer from the docs only.
+    tools: [workspace_file_read, workspace_glob, workspace_grep]
+    knowledge: [product_docs]
+  tone:
+    model: gpt_4o_mini
+  checker:
+    model: gpt_4o_mini
+    system: You verify claims.
+  editor:
+    model: gpt_4o_mini
+    system: You edit.
+flows:
+  triage:
+    start: triage
+    output: '{answer: results.docs_answer.text, review: results.reviewed}'
+    nodes:
+      - id: triage
+        type: task
+        agent: triage
+        prompt: |-
+          Question: {{.input.question}}
+
+          When you are done, decide how the workflow continues:
+          - call route_to_docs_answer when the answer is in the product docs
+          - call route_to_research_team when it needs research by several people
+          - otherwise, do not call a route tool
+        routes: [docs_answer, research_team, human]
+        next: docs_answer
+      - id: research_team
+        type: subflow
+        flow: triage_research_team
+        input: '{v1: input.question}'
+      - id: docs_answer
+        type: task
+        agent: docs_answer
+        prompt: '{{.input.question}}'
+        next: review
+      - id: review
+        type: fanout
+        branches: [tone, facts]
+        next: reviewed
+      - id: facts
+        type: subflow
+        flow: verify_claim
+        input: '{claim: results.docs_answer.text}'
+      - id: reviewed
+        type: join
+      - id: tone
+        type: task
+        agent: tone
+        prompt: Check the tone of {{.results.docs_answer.text}}
+  verify_claim:
+    start: checkers
+    nodes:
+      - id: checkers
+        type: subflow
+        flow: verify_claim_checkers
+        input: '{v1: input.claim}'
+crews:
+  verify_claim_checkers:
+    tasks:
+      - id: checker_task
+        agent: checker
+        description: Verify {{.input.v1}}
+        expected_output: A verdict
+      - id: editor_task
+        agent: editor
+        description: Summarise the verdict on {{.input.v1}}
+patterns:
+  triage_research_team:
+    type: supervisor
+    supervisor: lead
+    workers: [searcher, writer]
+    prompt: 'Investigate: {{.input.v1}}'

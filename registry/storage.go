@@ -156,6 +156,15 @@ func (r *Registry) HasEmbedderProvider(name string) bool { return has(&r.mu, r.e
 // HasVectorStoreType implements compile.Catalog.
 func (r *Registry) HasVectorStoreType(name string) bool { return has(&r.mu, r.vectorStores, name) }
 
+// MemoryTypes returns the registered memory type names, sorted.
+func (r *Registry) MemoryTypes() []string { return names(&r.mu, r.memoryTypes) }
+
+// EmbedderProviders returns the registered embedding provider names, sorted.
+func (r *Registry) EmbedderProviders() []string { return names(&r.mu, r.embedders) }
+
+// VectorStoreTypes returns the registered vector store type names, sorted.
+func (r *Registry) VectorStoreTypes() []string { return names(&r.mu, r.vectorStores) }
+
 // ValidateMemory implements compile.MemoryValidator.
 func (r *Registry) ValidateMemory(m spec.Memory) error {
 	t, ok := get(&r.mu, r.memoryTypes, m.TypeOrDefault())
