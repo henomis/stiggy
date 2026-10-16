@@ -17,10 +17,12 @@ package registry
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/henomis/packtrail/flow"
 	"github.com/henomis/phero/v2/llm"
 	"github.com/henomis/phero/v2/llm/anthropic"
+	"github.com/henomis/phero/v2/llm/google"
 	"github.com/henomis/phero/v2/llm/openai"
 	"github.com/henomis/phero/v2/tool/bash"
 	"github.com/henomis/phero/v2/tool/file"
@@ -45,6 +47,7 @@ func builtinProviders() map[string]ModelFactory {
 	return map[string]ModelFactory{
 		nameOpenAI:  newOpenAI,
 		"anthropic": newAnthropic,
+		"google":    newGoogle,
 		nameOllama:  newOllama,
 	}
 }
@@ -110,6 +113,25 @@ func newAnthropic(m spec.Model) (llm.LLM, error) {
 	}
 
 	return anthropic.New(m.APIKey, opts...), nil
+}
+
+// newGoogle uses the Gemini API through phero's native Google provider, which
+// keeps Gemini 3's thought signatures across tool calls (the OpenAI-compatible
+// endpoint loses them, so tools fail there). An empty api_key falls back to
+// GOOGLE_API_KEY or GEMINI_API_KEY.
+func newGoogle(m spec.Model) (llm.LLM, error) {
+	opts := []google.Option{google.WithBaseURL(m.BaseURL), google.WithModel(m.Model)}
+
+	if m.MaxTokens > 0 {
+		maxTokens := min(m.MaxTokens, math.MaxInt32)
+		opts = append(opts, google.WithMaxTokens(int32(maxTokens))) //nolint:gosec // clamped to MaxInt32 above
+	}
+
+	if m.Temperature != nil {
+		opts = append(opts, google.WithTemperature(float32(*m.Temperature)))
+	}
+
+	return google.New(m.APIKey, opts...), nil
 }
 
 type bashOptions struct {

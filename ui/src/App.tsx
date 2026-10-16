@@ -34,7 +34,7 @@ function download(name: string, text: string, type: string) {
   URL.revokeObjectURL(a.href);
 }
 
-const ENV_HINT: Record<string, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+const ENV_HINT: Record<string, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", google: "GEMINI_API_KEY" };
 
 export function App() {
   const h = useHistory(newProject());

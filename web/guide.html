@@ -169,14 +169,14 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <section id="models"><h2>Models</h2>
 <pre><code><span class="c-key">models</span>:
   <span class="c-key">fast</span>:
-    <span class="c-key">provider</span>: openai          <span class="c-com"># openai | anthropic | ollama (or a registered one)</span>
+    <span class="c-key">provider</span>: openai          <span class="c-com"># openai | anthropic | google | ollama (or a registered one)</span>
     <span class="c-key">model</span>: gpt-4o-mini        <span class="c-com"># provider default when empty; required for ollama</span>
     <span class="c-key">api_key</span>: ${OPENAI_API_KEY}
     <span class="c-key">base_url</span>: https://...     <span class="c-com"># OpenAI-compatible endpoints</span>
     <span class="c-key">temperature</span>: <span class="c-num">0.2</span>
     <span class="c-key">max_tokens</span>: <span class="c-num">1024</span>
     <span class="c-key">retries</span>: <span class="c-num">2</span>                <span class="c-com"># retry a failed call (exponential back-off)</span>
-    <span class="c-key">rate_limit</span>: {<span class="c-key">requests_per_minute</span>: <span class="c-num">60</span>, <span class="c-key">max_concurrent</span>: <span class="c-num">4</span>}   <span class="c-com"># per process</span></code></pre><p><code>ollama</code> uses Ollama's OpenAI-compatible endpoint (default <code>http://localhost:11434/v1</code>), for example <code>{provider: ollama, model: llama3.2-eco}</code>. <code>rate_limit</code> takes <code>requests_per_minute</code>, <code>max_concurrent</code> or both; an empty one is an error. In Go, <code>WithModel(name, llm)</code> registers a ready phero LLM and <code>WithModelSpec</code> the same struct as YAML.</p></section>
+    <span class="c-key">rate_limit</span>: {<span class="c-key">requests_per_minute</span>: <span class="c-num">60</span>, <span class="c-key">max_concurrent</span>: <span class="c-num">4</span>}   <span class="c-com"># per process</span></code></pre><p><code>ollama</code> uses Ollama's OpenAI-compatible endpoint (default <code>http://localhost:11434/v1</code>), for example <code>{provider: ollama, model: llama3. <code>google</code> uses the Gemini API natively, e.g. <code>{provider: google, model: gemini-3.5-flash, api_key: "${GEMINI_API_KEY}"}</code>; prefer it to Gemini's OpenAI-compatible endpoint for agents with tools, since Gemini 3 needs each tool call's thought signature sent back and only the native provider keeps it.2-eco}</code>. <code>rate_limit</code> takes <code>requests_per_minute</code>, <code>max_concurrent</code> or both; an empty one is an error. In Go, <code>WithModel(name, llm)</code> registers a ready phero LLM and <code>WithModelSpec</code> the same struct as YAML.</p></section>
 <section id="tools"><h2>Tools</h2>
 <pre><code><span class="c-key">tools</span>:
   <span class="c-key">shell</span>: {<span class="c-key">type</span>: bash, <span class="c-key">allowlist</span>: [ls, cat], <span class="c-key">timeout</span>: 30s, <span class="c-key">working_dir</span>: /work}

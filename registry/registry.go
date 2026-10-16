@@ -150,7 +150,7 @@ func Empty() *Registry {
 }
 
 // New returns a registry with every built-in:
-//   - LLM providers: openai, anthropic, ollama;
+//   - LLM providers: openai, anthropic, google, ollama;
 //   - tool types: bash, file_read, file_write, file_edit, glob, grep, skill,
 //     kv, mcp;
 //   - memory types: simple, nats, psql, rag;

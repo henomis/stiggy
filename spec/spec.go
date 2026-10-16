@@ -79,7 +79,7 @@ type Model struct {
 	// Instance is a ready LLM client, set from Go. When it is set, the other
 	// fields are ignored.
 	Instance llm.LLM `yaml:"-" json:"-"`
-	// Provider names a registered LLM provider (openai, anthropic, ollama, ...).
+	// Provider names a registered LLM provider (openai, anthropic, google, ollama, ...).
 	Provider string `yaml:"provider" json:"provider,omitempty"`
 	// Model is the provider's model id; empty means the provider default.
 	Model string `yaml:"model,omitempty" json:"model,omitempty"`
