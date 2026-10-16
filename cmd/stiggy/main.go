@@ -50,6 +50,9 @@ online (NATS from -server, $NATS_URL, or nats://127.0.0.1:4222):
   agents [-server URL] [-creds FILE] [-owner OWNER] [-agent FRAMEWORK]
       list the NATS Agent Protocol agents on the bus (exposed stiggy agents
       and flows, phero agents, any v0.3 agent)
+  ask [-server URL] [-creds FILE] [-owner OWNER] <agent> <prompt>...
+      prompt an agent on the bus and print its answer; -owner picks one
+      when several owners serve the name. Nothing is stored in NATS
 
 executions (same connection flags, and -ns NAMESPACE):
   get <exec> [-seq N]            state now, or right after event N
@@ -81,6 +84,7 @@ const (
 	cmdNameRun      = "run"
 	cmdNameStart    = "start"
 	cmdNameAgents   = "agents"
+	cmdNameAsk      = "ask"
 	cmdNameVersion  = "version"
 	flagVersion     = "-version"
 	flagVersionLong = "--version"
@@ -129,6 +133,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return cmdStart(ctx, args[1:], stdout, stderr)
 	case cmdNameAgents:
 		return cmdAgents(ctx, args[1:], stdout, stderr)
+	case cmdNameAsk:
+		return cmdAsk(ctx, args[1:], stdout, stderr)
 	case cmdNameVersion, flagVersion, flagVersionLong:
 		return cmdVersion(stdout)
 	case "help", "-h", "-help", "--help":

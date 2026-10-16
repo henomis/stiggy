@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -186,6 +187,8 @@ expose:
 		t.Fatalf("agents: %v\n%s", err, agents)
 	}
 
+	testAsk(t, nats.URL(), llmSrv.URL)
+
 	cancel()
 
 	if rerr := <-done; rerr != nil {
@@ -194,6 +197,71 @@ expose:
 
 	if !strings.Contains(logs.String(), "stiggy: serving") {
 		t.Errorf("no readiness log:\n%s", logs)
+	}
+}
+
+// testAsk prompts the exposed helper with `stiggy ask`, then serves a second
+// helper under another owner: the name alone is then ambiguous.
+func testAsk(t *testing.T, url, llmURL string) {
+	t.Helper()
+
+	answer, _, err := runCLI(t, "ask", "-server", url, "helper", "how", "are", "you?")
+	if err != nil || answer != "answer to: how are you?\n" {
+		t.Fatalf("ask: %v %q", err, answer)
+	}
+
+	if _, _, err = runCLI(t, "ask", "-server", url, "-owner", "nobody", "helper", "hi"); !errors.Is(err, errNoAgent) {
+		t.Errorf("ask an unknown agent: %v", err)
+	}
+
+	other := filepath.Join(t.TempDir(), "other.yaml")
+	if err = os.WriteFile(other, []byte(`
+namespace: other
+models:
+  local: {provider: ollama, model: fake, base_url: `+llmURL+`}
+agents:
+  helper: {model: local, role: Helper}
+expose:
+  agents: [helper]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- run(ctx, []string{"run", "-server", url, other}, &bytes.Buffer{}, &syncBuffer{}) }()
+
+	defer func() {
+		cancel()
+
+		if rerr := <-done; rerr != nil {
+			t.Errorf("run other: %v", rerr)
+		}
+	}()
+
+	deadline := time.Now().Add(30 * time.Second)
+
+	for {
+		_, _, err = runCLI(t, "ask", "-server", url, "helper", "hi")
+		if errors.Is(err, errAmbiguousAgent) {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("ask never saw two owners: %v", err)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if !strings.Contains(err.Error(), "cli, other") {
+		t.Errorf("ambiguous error = %v", err)
+	}
+
+	answer, _, err = runCLI(t, "ask", "-server", url, "-owner", "other", "helper", "hi")
+	if err != nil || answer != "answer to: hi\n" {
+		t.Errorf("ask -owner other: %v %q", err, answer)
 	}
 }
 

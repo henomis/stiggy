@@ -166,6 +166,16 @@ stiggy run fleet.yaml -role workers -only researcher,writer    # dedicated hosts
 A fleet without flows, one that only exposes agents, starts no engine and
 provisions nothing in NATS, so it needs no `-role`.
 
+`stiggy agents` lists the agents on the bus, and `stiggy ask` prompts one:
+
+```bash
+stiggy agents -owner newsroom
+stiggy ask -owner newsroom writer "Write two lines about NATS."
+```
+
+`ask` is a plain request over the NATS Agent Protocol: it stores nothing in
+NATS. `-owner` is needed only when several owners serve the same name.
+
 `/healthz` and `/readyz` serve health checks. [deploy/](deploy) has a
 Dockerfile and a docker-compose setup. To operate executions, use
 `stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
