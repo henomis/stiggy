@@ -111,7 +111,8 @@ func New(nc *nats.Conn, opts ...Option) (*App, error) {
 		return nil, err
 	}
 
-	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(plan.Namespace))
+	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(plan.Namespace),
+		packtrail.WithClientLogger(o.logger))
 	if err != nil {
 		return nil, fmt.Errorf("stiggy: %w", err)
 	}
@@ -181,7 +182,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// MCP sessions and database pools outlive every job.
 	if cerr := asm.close(); cerr != nil {
-		a.logger.Warn("stiggy: cleanup", "error", cerr)
+		a.logger.WarnContext(ctx, "stiggy: cleanup", "err", cerr)
 	}
 
 	if err != nil && ctx.Err() != nil && errors.Is(err, context.Canceled) {
@@ -408,7 +409,7 @@ func (a *App) handlers(ctx context.Context, asm *assembly) (map[string]worker.Ha
 	for _, wk := range a.plan.Workers {
 		if wk.Activity != "" {
 			h, _ := a.opts.registry.Activity(wk.Activity)
-			out[wk.Kind] = activityHandler(h)
+			out[wk.Kind] = logged(activityHandler(h), "activity", wk.Activity)
 
 			continue
 		}
@@ -420,7 +421,7 @@ func (a *App) handlers(ctx context.Context, asm *assembly) (map[string]worker.Ha
 			}
 
 			rm := agentrun.Remote{Name: wk.Remote, Spec: a.fleet.Remotes[wk.Remote], Resolver: r}
-			out[wk.Kind] = agentrun.RemoteHandler(rm, agentrun.WithFlows(a.client))
+			out[wk.Kind] = logged(agentrun.RemoteHandler(rm, agentrun.WithFlows(a.client)), "remote", wk.Remote)
 
 			continue
 		}
@@ -430,7 +431,7 @@ func (a *App) handlers(ctx context.Context, asm *assembly) (map[string]worker.Ha
 			return nil, fmt.Errorf("stiggy: %w", err)
 		}
 
-		out[wk.Kind] = agentrun.Handler(ag, agentrun.WithFlows(a.client))
+		out[wk.Kind] = logged(agentrun.Handler(ag, agentrun.WithFlows(a.client)), "agent", wk.Agent)
 	}
 
 	return out, nil

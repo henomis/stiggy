@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 
 	"github.com/henomis/packtrail/worker"
 )
@@ -61,6 +62,10 @@ type Job struct {
 	// worker. Its writes are not part of the execution log, so a retried
 	// step writes again: key them on StepID.
 	Store *worker.Store
+	// Logger is the step's logger: exec, flow, node, key, attempt and
+	// trace_id are bound, and agent. Tools log through it so their lines
+	// join the step's. Nil outside a flow step.
+	Logger *slog.Logger
 }
 
 // DecodeInput decodes the flow input into v.
