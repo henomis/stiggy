@@ -222,13 +222,18 @@ func runOps(ctx context.Context, name string, cmd opsCommand, args []string, std
 		return errUsage
 	}
 
+	logger, err := cf.logger(stderr)
+	if err != nil {
+		return err
+	}
+
 	nc, err := cf.connect()
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
 
-	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns))
+	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger))
 	if err != nil {
 		return err
 	}

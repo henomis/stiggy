@@ -61,7 +61,7 @@ func serveHealth(addr string, app *stiggy.App, logger *slog.Logger) (func(), err
 
 	go func() {
 		if serr := srv.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
-			logger.Error("stiggy: health server", "error", serr)
+			logger.Error("stiggy: health server", "err", serr)
 		}
 	}()
 

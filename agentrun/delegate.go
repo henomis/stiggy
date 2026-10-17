@@ -16,53 +16,19 @@ package agentrun
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
-	"github.com/henomis/phero/v2/trace"
 )
 
 // delegateToolPrefix starts the names of the tools that call delegates.
 const delegateToolPrefix = "ask_"
 
-// usageMeter adds up the summaries of every delegate run of one job, so
-// tokens spent inside delegation reach the step's usage.
-type usageMeter struct {
-	mu    sync.Mutex
-	usage map[string]float64
-}
-
-func (m *usageMeter) Trace(ev trace.Event) {
-	e, ok := ev.(trace.AgentRunSummaryEvent)
-	if !ok {
-		return
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.usage == nil {
-		m.usage = map[string]float64{}
-	}
-
-	for k, v := range usageOf(&e.Summary) {
-		m.usage[k] += v
-	}
-}
-
-func (m *usageMeter) total() map[string]float64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	return m.usage
-}
-
 // delegateTools builds one tool per delegate: a fresh phero agent (with its
 // own tools and delegates, but no memory) exposed with agent.AsTool. Calls
 // are not durable: if the step fails, they run again with it. A delegate's
 // system prompt renders over the delegating job's context, data.
-func delegateTools(delegates []Agent, data map[string]any, meter *usageMeter) ([]*llm.Tool, error) {
+func delegateTools(delegates []Agent, data map[string]any, tracer *runTracer) ([]*llm.Tool, error) {
 	tools := make([]*llm.Tool, 0, len(delegates))
 
 	for _, d := range delegates {
@@ -76,13 +42,13 @@ func delegateTools(delegates []Agent, data map[string]any, meter *usageMeter) ([
 			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
 		}
 
-		ag.SetTracer(meter)
+		ag.SetTracer(tracer)
 
 		if d.Spec.MaxIterations > 0 {
 			ag.SetMaxIterations(d.Spec.MaxIterations)
 		}
 
-		sub, err := delegateTools(d.Delegates, data, meter)
+		sub, err := delegateTools(d.Delegates, data, tracer)
 		if err != nil {
 			return nil, err
 		}

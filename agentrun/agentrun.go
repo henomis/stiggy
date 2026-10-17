@@ -24,12 +24,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/henomis/packtrail/flow"
 	"github.com/henomis/packtrail/worker"
@@ -83,10 +83,17 @@ func WithFlows(src FlowSource) Option {
 	return func(r *runner) { r.flows = newFlowCache(src) }
 }
 
+// WithLogger sets the logger of an exposed agent's runs (default
+// slog.Default()). Flow steps log through their job's logger.
+func WithLogger(l *slog.Logger) Option {
+	return func(r *runner) { r.logger = l }
+}
+
 type runner struct {
 	a        Agent
 	flows    *flowCache
 	sessions *sessionCache
+	logger   *slog.Logger
 }
 
 // Handler returns the worker handler of a.
@@ -142,9 +149,12 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, err
 	}
 
-	meter := &usageMeter{}
+	// Delegate runs are traced apart: their summaries add to the step's
+	// usage, while the step agent's own summary is its last run.
+	logger := job.Logger()
+	delegated := newRunTracer(runCtx, logger)
 
-	ag, err := r.build(job.Node, step, schema, data, ctl, meter)
+	ag, err := r.build(job.Node, step, schema, data, ctl, delegated)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -155,11 +165,11 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 
 	// Every way this run ends reports what it spent: a completion through
 	// Result.Usage, an interrupt or a failure through worker.WithUsage.
-	tr := &summaryTracer{}
+	tr := newRunTracer(runCtx, logger)
 	ag.SetTracer(tr)
 
 	res, err := r.runAgent(runCtx, job, ag, prompt+h.transcript())
-	usage := addUsage(usageOf(tr.summary()), meter.total())
+	usage := addUsage(usageOf(tr.summary()), delegated.usage())
 
 	if q := ctl.question(); q != "" {
 		return nil, worker.WithUsage(h.interrupt(&pending{Kind: kindQuestion, Text: q}, r.a.Name, job.Node), usage)
@@ -197,6 +207,7 @@ func jobInfo(job *worker.Job, agentName string) jobctx.Job {
 		StepID:  job.ExecID + "/" + job.Key + "/" + strconv.Itoa(job.Generation),
 		Attempt: job.Attempt, Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
 		Channels: visibleChannels(job.Context.Channels), Store: job.Store(),
+		Logger: job.Logger().With("agent", agentName),
 	}
 }
 
@@ -247,7 +258,7 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, meter *usageMeter,
+func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, delegated *runTracer,
 ) (*agent.Agent, error) {
 	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
 	if err != nil {
@@ -264,7 +275,7 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	delegates, err := delegateTools(r.a.Delegates, data, meter)
+	delegates, err := delegateTools(r.a.Delegates, data, delegated)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
@@ -354,28 +365,6 @@ func classify(err error) error {
 	}
 
 	return err
-}
-
-// summaryTracer keeps the summary phero traces at the end of every run,
-// including runs that fail before returning a result.
-type summaryTracer struct {
-	mu   sync.Mutex
-	last *trace.RunSummary
-}
-
-func (t *summaryTracer) Trace(ev trace.Event) {
-	if e, ok := ev.(trace.AgentRunSummaryEvent); ok {
-		t.mu.Lock()
-		t.last = &e.Summary
-		t.mu.Unlock()
-	}
-}
-
-func (t *summaryTracer) summary() *trace.RunSummary {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.last
 }
 
 // usageOf returns the counters of one agent run from its summary, which is

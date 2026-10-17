@@ -176,7 +176,11 @@ stiggy ask -owner newsroom writer "Write two lines about NATS."
 `ask` is a plain request over the NATS Agent Protocol: it stores nothing in
 NATS. `-owner` is needed only when several owners serve the same name.
 
-`/healthz` and `/readyz` serve health checks. [deploy/](deploy) has a
+`/healthz` and `/readyz` serve health checks. Logs share packtrail's keys
+(`exec`, `node`, `attempt`, `agent`, ...): every step logs its start and end
+with the outcome, duration and tokens, and `-log-level debug` adds each model
+and tool call. `-log-format json` (or `STIGGY_LOG_LEVEL`, `STIGGY_LOG_FORMAT`)
+suits log collectors. [deploy/](deploy) has a
 Dockerfile and a docker-compose setup. To operate executions, use
 `stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
 or packtrail's CLI and `packtrail-ui` on the fleet's namespace.
