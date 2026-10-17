@@ -44,7 +44,8 @@ online (NATS from -server, $NATS_URL, or nats://127.0.0.1:4222):
   run [-server URL] [-creds FILE] [-role all|engine|workers] [-only a,b] [-http ADDR] <fleet.yaml>
       serve the fleet until interrupted; every process of a deployment
       uses the same file and picks its part with -role (and -only for
-      workers); -http serves /healthz and /readyz
+      workers); -http serves /healthz, /readyz and /metrics. Traces and
+      metrics go over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is set
   start [-server URL] [-creds FILE] [-ns NAMESPACE] [-input JSON] [-id ID] [-wait] <flow>
       start an execution and print its id; -wait prints the final state
   agents [-server URL] [-creds FILE] [-owner OWNER] [-agent FRAMEWORK]
@@ -57,6 +58,7 @@ online (NATS from -server, $NATS_URL, or nats://127.0.0.1:4222):
 executions (same connection flags, and -ns NAMESPACE):
   get <exec> [-seq N]            state now, or right after event N
   history <exec>                 the event log, as JSON lines
+  timeline <exec> [-format F]    steps with queue and run times, tokens, cost, tool calls
   progress <exec>                streamed agent progress, as JSON lines
   signal <exec> <name> [-payload JSON]
   resume <exec> <node> [-value JSON]   answer an agent waiting for a human

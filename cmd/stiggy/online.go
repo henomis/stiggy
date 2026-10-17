@@ -36,6 +36,7 @@ import (
 	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/internal/logflags"
 	"github.com/henomis/stiggy/internal/natsconn"
+	"github.com/henomis/stiggy/internal/telemetry"
 	"github.com/henomis/stiggy/spec"
 )
 
@@ -77,6 +78,22 @@ func (c *connFlags) logger(w io.Writer) (*slog.Logger, error) {
 	return c.logs.NewLogger(w)
 }
 
+// telemetry sets up OpenTelemetry from the OTEL_* environment; prometheus
+// also serves metrics on -http.
+func (c *connFlags) telemetry(ctx context.Context, prometheus bool) (*telemetry.Telemetry, error) {
+	v, _, _ := buildVersion()
+
+	return telemetry.Setup(ctx, telemetry.Config{ServiceName: "stiggy", ServiceVersion: v, Prometheus: prometheus})
+}
+
+// shutdownTelemetry flushes what tel exports, warning when it cannot (an
+// unreachable collector delays the exit by at most the flush timeout).
+func shutdownTelemetry(tel *telemetry.Telemetry, logger *slog.Logger) {
+	if err := tel.Shutdown(); err != nil {
+		logger.Warn("stiggy: telemetry not flushed", "err", err)
+	}
+}
+
 func (c *connFlags) connect() (*nats.Conn, error) {
 	return natsconn.Connect(natsconn.Config{URL: c.server, CredsFile: c.creds})
 }
@@ -88,7 +105,7 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 	cf.register(fs)
 	role := fs.String("role", string(stiggy.RoleAll), "all, engine or workers")
 	only := fs.String("only", "", "comma-separated agents, activities and remotes this process runs")
-	httpAddr := fs.String("http", "", "serve /healthz and /readyz on this address")
+	httpAddr := fs.String("http", "", "serve /healthz, /readyz and /metrics on this address")
 
 	files, err := parseArgs(fs, args)
 	if err != nil {
@@ -111,13 +128,23 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 		return err
 	}
 
+	tel, err := cf.telemetry(ctx, *httpAddr != "")
+	if err != nil {
+		return err
+	}
+
+	defer shutdownTelemetry(tel, logger)
+
 	nc, err := cf.connect()
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
 
-	opts := []stiggy.Option{stiggy.WithFleet(fleet), stiggy.WithRole(stiggy.Role(*role)), stiggy.WithLogger(logger)}
+	opts := []stiggy.Option{
+		stiggy.WithFleet(fleet), stiggy.WithRole(stiggy.Role(*role)), stiggy.WithLogger(logger),
+		stiggy.WithTracerProvider(tel.TracerProvider), stiggy.WithMeterProvider(tel.MeterProvider),
+	}
 	if names := splitList(*only); len(names) > 0 {
 		opts = append(opts, stiggy.WithOnly(names...))
 	}
@@ -144,7 +171,7 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 	}()
 
 	if *httpAddr != "" {
-		stop, herr := serveHealth(*httpAddr, app, logger)
+		stop, herr := serveHealth(*httpAddr, app, tel.Handler, logger)
 		if herr != nil {
 			return herr
 		}
@@ -196,7 +223,15 @@ func cmdStart(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer nc.Close()
 
-	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger))
+	tel, err := cf.telemetry(ctx, false)
+	if err != nil {
+		return err
+	}
+
+	defer shutdownTelemetry(tel, logger)
+
+	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger),
+		packtrail.WithClientTracerProvider(tel.TracerProvider))
 	if err != nil {
 		return err
 	}

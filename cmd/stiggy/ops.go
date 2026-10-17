@@ -21,9 +21,13 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/henomis/packtrail"
 
+	"github.com/henomis/stiggy"
 	"github.com/henomis/stiggy/spec"
 )
 
@@ -49,6 +53,7 @@ func opsCommands() map[string]opsCommand {
 	return map[string]opsCommand{
 		"get":      {argExec, 1, opsGet},
 		"history":  {argExec, 1, opsHistory},
+		"timeline": {argExec, 1, opsTimeline},
 		"signal":   {"<exec> <name>", 2, opsSignal},
 		"resume":   {argExecNode, 2, opsResume},
 		"cancel":   {argExec, 1, opsCancel},
@@ -98,6 +103,138 @@ func opsHistory(_ *flag.FlagSet) opsRun {
 
 		return nil
 	}
+}
+
+// timelineView is a timeline with each agent step's summary decoded, and the
+// execution's totals.
+type timelineView struct {
+	*packtrail.Timeline
+
+	Steps  []timelineStep `json:"steps"`
+	Totals stepTotals     `json:"totals"`
+}
+
+type timelineStep struct {
+	packtrail.TimelineStep
+
+	Agent *stiggy.StepSummary `json:"agent,omitempty"`
+}
+
+type stepTotals struct {
+	TokensIn  int     `json:"tokens_in"`
+	TokensOut int     `json:"tokens_out"`
+	CostUSD   float64 `json:"cost_usd"`
+}
+
+// MarshalJSON keeps the step's own encoding (queue_ms, run_ms) and adds the
+// decoded summary as "agent".
+func (s timelineStep) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(s.TimelineStep)
+	if err != nil || s.Agent == nil {
+		return b, err
+	}
+
+	var m map[string]json.RawMessage
+	if err = json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+
+	if m["agent"], err = json.Marshal(s.Agent); err != nil {
+		return nil, err
+	}
+
+	delete(m, "summary")
+
+	return json.Marshal(m)
+}
+
+// formatText is timeline's table output (formatJSON is the default).
+const formatText = "text"
+
+func opsTimeline(fs *flag.FlagSet) opsRun {
+	format := fs.String("format", formatJSON, "output format: json or text")
+
+	return func(ctx context.Context, c *packtrail.Client, pos []string, out io.Writer) error {
+		if *format != formatJSON && *format != formatText {
+			return fmt.Errorf("%w: -format %q (want json or text)", errUsage, *format)
+		}
+
+		tl, err := c.Timeline(ctx, pos[0])
+		if err != nil {
+			return err
+		}
+
+		v := &timelineView{Timeline: tl, Steps: make([]timelineStep, 0, len(tl.Steps))}
+
+		for _, s := range tl.Steps {
+			st := timelineStep{TimelineStep: s}
+
+			var sum stiggy.StepSummary
+			if len(s.Summary) > 0 && json.Unmarshal(s.Summary, &sum) == nil && sum.Agent != "" {
+				st.Agent = &sum
+				v.Totals.TokensIn += sum.TokensIn
+				v.Totals.TokensOut += sum.TokensOut
+				v.Totals.CostUSD += sum.CostUSD
+
+				for _, d := range sum.Delegates {
+					v.Totals.TokensIn += d.TokensIn
+					v.Totals.TokensOut += d.TokensOut
+					v.Totals.CostUSD += d.CostUSD
+				}
+			}
+
+			v.Steps = append(v.Steps, st)
+		}
+
+		if *format == formatText {
+			return writeTimeline(out, v)
+		}
+
+		return writeJSON(out, v)
+	}
+}
+
+// writeTimeline prints a timeline as a table, then the totals.
+func writeTimeline(out io.Writer, v *timelineView) error {
+	tw := tabwriter.NewWriter(out, 0, 0, tablePadding, ' ', 0)
+
+	_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", v.ExecID, v.Flow, v.Status)
+	_, _ = fmt.Fprintln(tw, "STEP\tTYPE\tATTEMPT\tOUTCOME\tQUEUE\tRUN\tAGENT\tTOKENS\tTOOLS")
+
+	for _, s := range v.Steps {
+		agentName, tokens, tools := "-", "-", "-"
+		if a := s.Agent; a != nil {
+			agentName = a.Agent
+			tokens = fmt.Sprintf("%d/%d", a.TokensIn, a.TokensOut)
+
+			names := make([]string, 0, len(a.Tools))
+			for _, t := range a.Tools {
+				names = append(names, fmt.Sprintf("%s×%d", t.Name, t.Calls))
+			}
+
+			if len(names) > 0 {
+				tools = strings.Join(names, ",")
+			}
+		}
+
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Key+nodeSuffix(s.TimelineStep), s.Type,
+			s.Attempt, s.Outcome, s.Queue.Round(time.Millisecond), s.Run.Round(time.Millisecond), agentName, tokens,
+			tools)
+	}
+
+	_, _ = fmt.Fprintf(tw, "TOTAL\t\t\t\t\t\t\t%d/%d\t$%.4f\n", v.Totals.TokensIn, v.Totals.TokensOut,
+		v.Totals.CostUSD)
+
+	return tw.Flush()
+}
+
+// nodeSuffix names an await's or subflow's node, which have no task key.
+func nodeSuffix(s packtrail.TimelineStep) string {
+	if s.Key == "" {
+		return s.Node
+	}
+
+	return ""
 }
 
 func opsSignal(fs *flag.FlagSet) opsRun {
@@ -233,7 +370,15 @@ func runOps(ctx context.Context, name string, cmd opsCommand, args []string, std
 	}
 	defer nc.Close()
 
-	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger))
+	tel, err := cf.telemetry(ctx, false)
+	if err != nil {
+		return err
+	}
+
+	defer shutdownTelemetry(tel, logger)
+
+	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger),
+		packtrail.WithClientTracerProvider(tel.TracerProvider))
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,10 @@
 # Protocol client:
 #   docker compose -f deploy/docker-compose.yaml run --rm cli \
 #     start -ns newsroom article -input '{"prompt": "NATS"}' -wait
+#
+# Each process serves Prometheus metrics on :8080/metrics. To export traces
+# and metrics over OTLP, uncomment the OTEL_* variables below and point them
+# at a collector.
 services:
   nats:
     image: nats:2.12
@@ -20,6 +24,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # OTEL_SERVICE_NAME: stiggy-engine
     volumes: [./fleet.yaml:/etc/stiggy/fleet.yaml:ro]
     depends_on: [nats]
 
@@ -29,6 +35,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # OTEL_SERVICE_NAME: stiggy-workers
     volumes: [./fleet.yaml:/etc/stiggy/fleet.yaml:ro]
     depends_on: [nats]
 

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
 
 	"github.com/henomis/packtrail"
 	"github.com/henomis/packtrail/worker"
@@ -70,6 +71,9 @@ type App struct {
 	ran         atomic.Bool
 	stopWorkers context.CancelFunc // set by startWorkers, used by Run only
 	stopServers context.CancelFunc // set by start, used by Run only
+
+	telOnce sync.Once
+	tel     *agentrun.Telemetry
 }
 
 // New validates and compiles the fleet the options describe. It does no I/O:
@@ -94,6 +98,14 @@ func New(nc *nats.Conn, opts ...Option) (*App, error) {
 		o.logger = slog.Default()
 	}
 
+	if o.tracer == nil {
+		o.tracer = otel.GetTracerProvider()
+	}
+
+	if o.meter == nil {
+		o.meter = otel.GetMeterProvider()
+	}
+
 	for _, name := range sortedKeys(o.activities) {
 		if err := o.registry.RegisterActivity(name, o.activities[name]); err != nil {
 			return nil, err
@@ -112,7 +124,7 @@ func New(nc *nats.Conn, opts ...Option) (*App, error) {
 	}
 
 	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(plan.Namespace),
-		packtrail.WithClientLogger(o.logger))
+		packtrail.WithClientLogger(o.logger), packtrail.WithClientTracerProvider(o.tracer))
 	if err != nil {
 		return nil, fmt.Errorf("stiggy: %w", err)
 	}
@@ -277,7 +289,8 @@ func exposedCount(f *spec.Fleet) int {
 
 func (a *App) startEngine(ctx, engCtx context.Context, wg *sync.WaitGroup, errc chan error) error {
 	opts := make([]packtrail.Option, 0, 2+len(a.plan.Flows)+len(a.plan.Schedules)+len(a.opts.engineOpts))
-	opts = append(opts, packtrail.WithNamespace(a.plan.Namespace), packtrail.WithLogger(a.logger))
+	opts = append(opts, packtrail.WithNamespace(a.plan.Namespace), packtrail.WithLogger(a.logger),
+		packtrail.WithTracerProvider(a.opts.tracer), packtrail.WithMeterProvider(a.opts.meter))
 
 	for _, f := range a.plan.Flows {
 		opts = append(opts, packtrail.WithFlow(f))
@@ -354,6 +367,7 @@ func (a *App) startWorkers(ctx context.Context, wg *sync.WaitGroup, errc chan er
 func (a *App) runWorker(ctx context.Context, kind string, h worker.Handler, ready chan struct{}) error {
 	opts := append([]worker.Option{
 		worker.WithNamespace(a.plan.Namespace), worker.WithLogger(a.logger),
+		worker.WithTracerProvider(a.opts.tracer), worker.WithMeterProvider(a.opts.meter),
 	}, a.opts.workerOpts...)
 
 	var once sync.Once
@@ -431,7 +445,8 @@ func (a *App) handlers(ctx context.Context, asm *assembly) (map[string]worker.Ha
 			return nil, fmt.Errorf("stiggy: %w", err)
 		}
 
-		out[wk.Kind] = logged(agentrun.Handler(ag, agentrun.WithFlows(a.client)), "agent", wk.Agent)
+		out[wk.Kind] = logged(agentrun.Handler(ag, agentrun.WithFlows(a.client), agentrun.WithTelemetry(a.telemetry())),
+			"agent", wk.Agent)
 	}
 
 	return out, nil
@@ -473,3 +488,10 @@ func activityHandler(h worker.Handler) worker.Handler {
 }
 
 func sortedKeys[V any](m map[string]V) []string { return slices.Sorted(maps.Keys(m)) }
+
+// telemetry is where agent runs report spans and metrics.
+func (a *App) telemetry() *agentrun.Telemetry {
+	a.telOnce.Do(func() { a.tel = agentrun.NewTelemetry(a.opts.tracer, a.opts.meter) })
+
+	return a.tel
+}

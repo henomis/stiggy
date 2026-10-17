@@ -19,6 +19,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/henomis/packtrail"
 	"github.com/henomis/packtrail/flow"
 	"github.com/henomis/packtrail/worker"
@@ -62,6 +65,8 @@ type options struct {
 	registry   *registry.Registry
 	role       Role
 	logger     *slog.Logger
+	tracer     trace.TracerProvider
+	meter      metric.MeterProvider
 	engineOpts []packtrail.Option
 	workerOpts []worker.Option
 	only       []string
@@ -326,6 +331,37 @@ func WithRole(r Role) Option {
 func WithLogger(l *slog.Logger) Option {
 	return func(o *options) error {
 		o.logger = l
+
+		return nil
+	}
+}
+
+// WithTracerProvider sets where traces go: packtrail's spans (an execution
+// is one trace, each step a job span) and, under them, each agent run, model
+// call and tool call. Default: the global OpenTelemetry provider, a no-op
+// until the program installs an SDK.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(o *options) error {
+		if tp == nil {
+			return fmt.Errorf("%w: nil tracer provider", ErrOption)
+		}
+
+		o.tracer = tp
+
+		return nil
+	}
+}
+
+// WithMeterProvider sets where metrics go: packtrail's (commands, executions,
+// jobs) and stiggy's (agent runs, model calls and tokens, tool calls, cost).
+// Default: the global OpenTelemetry provider.
+func WithMeterProvider(mp metric.MeterProvider) Option {
+	return func(o *options) error {
+		if mp == nil {
+			return fmt.Errorf("%w: nil meter provider", ErrOption)
+		}
+
+		o.meter = mp
 
 		return nil
 	}

@@ -17,6 +17,7 @@ package stiggy
 import (
 	"context"
 
+	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/internal/jobctx"
 )
 
@@ -34,3 +35,8 @@ var ErrNoJobValue = jobctx.ErrNoValue
 // JobFromContext returns the job of a tool call's context. It reports false
 // outside a flow step, as for an exposed agent answering a prompt.
 func JobFromContext(ctx context.Context) (Job, bool) { return jobctx.From(ctx) }
+
+// StepSummary is what an agent step did: counts, tokens, cost and timings,
+// never content. It is recorded with each attempt of the step and shown by
+// `stiggy timeline` (packtrail's TimelineStep.Summary holds it as JSON).
+type StepSummary = agentrun.StepSummary

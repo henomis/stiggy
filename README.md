@@ -176,13 +176,25 @@ stiggy ask -owner newsroom writer "Write two lines about NATS."
 `ask` is a plain request over the NATS Agent Protocol: it stores nothing in
 NATS. `-owner` is needed only when several owners serve the same name.
 
-`/healthz` and `/readyz` serve health checks. Logs share packtrail's keys
+`/healthz` and `/readyz` serve health checks, and `/metrics` serves
+Prometheus metrics. Logs share packtrail's keys
 (`exec`, `node`, `attempt`, `agent`, ...): every step logs its start and end
 with the outcome, duration and tokens, and `-log-level debug` adds each model
 and tool call. `-log-format json` (or `STIGGY_LOG_LEVEL`, `STIGGY_LOG_FORMAT`)
-suits log collectors. [deploy/](deploy) has a
+suits log collectors.
+
+An execution is one OpenTelemetry trace: packtrail's decisions and job
+attempts, and under each agent step the agent run, every model call
+(`chat`) and tool call (`execute_tool`), with delegates under the tool call
+that asked them. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and
+metrics (agent runs, model latency and tokens, tool calls, cost, and
+packtrail's own); in Go, pass `WithTracerProvider` and `WithMeterProvider`.
+`stiggy timeline <exec>` shows each step's queue and run times, tokens,
+cost and tool calls from the event log, with no backend at all.
+
+[deploy/](deploy) has a
 Dockerfile and a docker-compose setup. To operate executions, use
-`stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
+`stiggy get | history | timeline | progress | signal | resume | update | cancel | fork | rerun`,
 or packtrail's CLI and `packtrail-ui` on the fleet's namespace.
 
 ## Development

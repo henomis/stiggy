@@ -109,7 +109,17 @@ flows:
 
 // startLogging runs loggingFleet: lead delegates to aide, which calls the
 // note tool; the tool logs through its job's logger.
-func startLogging(t *testing.T, level slog.Level) (*logRecorder, string) {
+func startLogging(t *testing.T, level slog.Level, opts ...stiggy.Option) (*logRecorder, string) {
+	t.Helper()
+
+	rec := newLogRecorder(level)
+	h := startLoggingFleet(t, append(opts, stiggy.WithLogger(slog.New(rec)))...)
+
+	return rec, runAsk(context.Background(), t, h)
+}
+
+// startLoggingFleet starts loggingFleet with opts.
+func startLoggingFleet(t *testing.T, opts ...stiggy.Option) *stiggytest.Harness {
 	t.Helper()
 
 	note, err := llm.NewTool("note", "Takes a note.", func(ctx context.Context, _ *struct{}) (string, error) {
@@ -136,11 +146,16 @@ func startLogging(t *testing.T, level slog.Level) (*logRecorder, string) {
 		})
 	}
 
-	rec := newLogRecorder(level)
-	h := startYAML(t, loggingFleet, map[string]llm.LLM{"direct": callFirst("note"), "boss": callFirst("ask_aide")},
-		stiggy.WithTool("note", note), stiggy.WithLogger(slog.New(rec)))
+	return startYAML(t, loggingFleet, map[string]llm.LLM{"direct": callFirst("note"), "boss": callFirst("ask_aide")},
+		append(opts, stiggy.WithTool("note", note))...)
+}
 
-	ctx := ctxTimeout(t)
+// runAsk runs the ask flow from parent (its trace, if any) to completion.
+func runAsk(parent context.Context, t *testing.T, h *stiggytest.Harness) string {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(parent, stiggytest.Timeout)
+	defer cancel()
 
 	id, err := h.Client.Start(ctx, "ask", map[string]any{"q": "?"})
 	if err != nil {
@@ -152,7 +167,7 @@ func startLogging(t *testing.T, level slog.Level) (*logRecorder, string) {
 		t.Fatalf("status %v: %v %s", st, err, st.Error)
 	}
 
-	return rec, id
+	return id
 }
 
 // TestStepLogs checks a step logs its start and end through its job's
