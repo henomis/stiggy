@@ -153,11 +153,16 @@ export const BLOCKS: BlockDef[] = [
     group: "Flow",
     icon: "⇶",
     color: "--c-flow",
-    description: "Waits for parallel branches: all of them, or the first to finish.",
+    description: "Waits for parallel branches: all of them, the first to finish, or all of them with some allowed to fail.",
     hasInput: true,
     ports: () => out,
     defaults: () => ({ wait: "all" }),
-    summary: (b) => (b.params?.wait === "first" ? "wait for the first" : "wait for all"),
+    summary: (b) =>
+      b.params?.wait === "first"
+        ? "wait for the first"
+        : b.params?.wait === "min"
+          ? `wait for all, ${typeof b.params?.min === "number" ? b.params.min : 1} must succeed`
+          : "wait for all",
   },
   {
     type: "approval",

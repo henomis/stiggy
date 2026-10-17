@@ -42,6 +42,7 @@
 <div class="group"><p>Flows</p>
 <a href="#flows">Flows and steps</a>
 <a href="#prompts">Prompt templates</a>
+<a href="#parallel">Parallel agents</a>
 <a href="#budgets">Usage and budgets</a>
 <a href="#routing">Routing and human in the loop</a>
 <a href="#crews">Crews</a>
@@ -66,7 +67,7 @@
 </aside>
 <main id="content">
 <h1 class="title">Guide</h1>
-<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.0.0 and packtrail v1.0.1.</p>
+<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.1.0 and packtrail v1.0.2-rc.1.</p>
 <section id="overview"><h2>Overview</h2>
 <p><strong>stiggy</strong> deploys multi-agent architectures on NATS by gluing two libraries: <a href="https://github.com/henomis/phero">phero</a> (agents, LLMs, tools, memory, the NATS Agent Protocol) and <a href="https://github.com/henomis/packtrail">packtrail</a> (a durable, event-sourced workflow engine on JetStream). It adds crews, supervisors, swarms, human review and replay on a substrate that survives crashes and scales out.</p>
 <p>A fleet is defined once, as YAML (the <code>stiggy</code> binary) or in Go (the library), and both build the same model.</p>
@@ -118,7 +119,7 @@
 # from a checkout
 make build        # bin/stiggy (static, honors GOOS/GOARCH)
 make test         # all tests with -race
-make check        # test + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.0.0 and <code>packtrail</code> v1.0.1.</p></section>
+make check        # test + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.1.0 and <code>packtrail</code> v1.0.2-rc.1.</p></section>
 <section id="quickstart"><h2>Quick start</h2>
 <pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
 <span class="c-key">namespace</span>: newsroom
@@ -255,6 +256,15 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <h3>Outputs</h3>
 <p>An agent step's output is <code>{"text": "&lt;answer&gt;"}</code>, or the parsed object when it has an <code>output_schema</code>. <code>writes</code> copies all of it (<code>output</code>) or a field (<code>output.verdict</code>) into a channel, applying the channel's reducer. A field needs an <code>output_schema</code> that can hold it: without one, only <code>output</code> and <code>output.text</code> compile. With an <code>output_schema</code> that sets <code>additionalProperties: false</code>, the field must be one of its <code>properties</code>. Activity steps are not checked.</p>
 <p>An empty answer, from an agent or a remote, is a retryable failure: the node's <code>retry</code> asks again, and without one the step fails. An agent that chose a route may answer empty.</p>
+<h3 id="parallel">Parallel agents that may fail</h3>
+<p>A <code>fanout</code> runs agent steps side by side and its <code>join</code> decides when the flow moves on. <code>all</code> (default), <code>any</code> and <code>quorum:N</code> settle as soon as the outcome is known and cancel the agents still running. <code>min:N</code> waits for every agent, then continues if at least N succeeded (<code>min:0</code> always continues): no answer is lost to cancellation. The join's result holds each successful answer by branch, <code>.branches</code> tells which branches completed or failed, and <code>.errors</code> why. When fewer than N succeed, the join goes to its <code>on_failure</code>, or fails the execution without one.</p>
+<pre><code>      - {<span class="c-key">id</span>: fan, <span class="c-key">type</span>: fanout, <span class="c-key">branches</span>: [a, b, c], <span class="c-key">next</span>: gather}
+      - {<span class="c-key">id</span>: a, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: researcher_a, <span class="c-key">retry</span>: {<span class="c-key">max_attempts</span>: <span class="c-num">2</span>}}
+      - {<span class="c-key">id</span>: b, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: researcher_b}
+      - {<span class="c-key">id</span>: c, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: researcher_c}
+      - {<span class="c-key">id</span>: gather, <span class="c-key">type</span>: join, <span class="c-key">policy</span>: <span class="c-str">"min:1"</span>, <span class="c-key">next</span>: write, <span class="c-key">on_failure</span>: give_up}
+      - {<span class="c-key">id</span>: write, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: writer, <span class="c-key">prompt</span>: <span class="c-str">"Use these answers: {{json .results.gather}}"</span>}
+      - {<span class="c-key">id</span>: give_up, <span class="c-key">type</span>: task, <span class="c-key">agent</span>: writer, <span class="c-key">prompt</span>: <span class="c-str">"No researcher answered: {{json .errors}}"</span>}</code></pre>
 <h3 id="budgets">Usage counters and budgets</h3>
 <p>Budgets in <code>budget</code> (flow, crew or pattern) can use <code>agent_steps</code>, <code>tokens_in</code>, <code>tokens_out</code> and <code>cost_usd</code>. They are charged for every run, including failed and paused ones, and checked on completion, failure and pause. <code>max_steps</code> bounds the number of node visits.</p>
 <h3 id="example-flow">A larger example</h3>
@@ -359,7 +369,7 @@ stiggy run news.yaml                           # the generated fleet</code></pre
 <tr><td>AI Router</td><td>An agent picks the next step from named routes</td><td>a step with <code>routes</code></td></tr>
 <tr><td>Loop over items</td><td>Runs an agent once per item of a list</td><td>a <code>map</code> step</td></tr>
 <tr><td>Condition</td><td>Goes to <em>true</em> or <em>false</em> by comparing values</td><td>a <code>choice</code> node</td></tr>
-<tr><td>Parallel, Merge</td><td>Runs branches side by side and waits for all or the first</td><td><code>fanout</code> and <code>join</code></td></tr>
+<tr><td>Parallel, Merge</td><td>Runs branches side by side and waits for all, the first, or all with some allowed to fail</td><td><code>fanout</code> and <code>join</code></td></tr>
 <tr><td>Human approval</td><td>Waits for a person: approved, rejected or timed out</td><td>an <code>await</code> on a signal named after the block, then a <code>choice</code></td></tr>
 <tr><td>Run workflow</td><td>Runs another workflow of the project</td><td>a <code>subflow</code></td></tr>
 <tr><td>Agent team</td><td>Several agents on one task: crew, supervisor, swarm, write &amp; review, debate, plan &amp; execute</td><td>a crew or a pattern, run as a <code>subflow</code></td></tr>

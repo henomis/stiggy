@@ -17,6 +17,7 @@ package stiggy_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -590,6 +591,64 @@ flows:
 		st := h.Run(t, "f", map[string]any{})
 		if st.Status != packtrail.StatusCompleted || st.Visits["b"] != 1 {
 			t.Fatalf("status %s (%s), visits %v", st.Status, st.Error, st.Visits)
+		}
+	})
+}
+
+// TestFanoutMinJoin covers a fan-out of agents whose join tolerates failures:
+// min:N waits for every agent and keeps every answer.
+func TestFanoutMinJoin(t *testing.T) {
+	const doc = `
+models: {ma: {provider: x}, mb: {provider: x}, mc: {provider: x}, mw: {provider: x}}
+agents: {a: {model: ma}, b: {model: mb}, c: {model: mc}, writer: {model: mw}}
+flows:
+  f:
+    nodes:
+      - {id: fan, type: fanout, branches: [a, b, c], next: gather}
+      - {id: a, type: task, agent: a}
+      - {id: b, type: task, agent: b}
+      - {id: c, type: task, agent: c}
+      - {id: gather, type: join, policy: '%s', next: write, on_failure: none}
+      - {id: write, type: task, agent: writer, prompt: "{{json .results.gather}}"}
+      - {id: none, type: task, agent: writer, prompt: "none"}
+`
+
+	models := func() map[string]llm.LLM {
+		// a and b answer empty, which fails their step; c answers.
+		return map[string]llm.LLM{
+			"ma": stiggytest.Replies(""), "mb": stiggytest.Replies(""), "mc": stiggytest.Replies("from c"),
+			"mw": stiggytest.Echo(""),
+		}
+	}
+
+	t.Run("met", func(t *testing.T) {
+		h := startYAML(t, fmt.Sprintf(doc, "min:1"), models())
+
+		st := h.Run(t, "f", map[string]any{})
+		if st.Status != packtrail.StatusCompleted || st.LastNode != "write" {
+			t.Fatalf("status %s at %q: %s", st.Status, st.LastNode, st.Error)
+		}
+
+		if st.Branches["a"] != "failed" || st.Branches["b"] != "failed" || st.Branches["c"] != "completed" {
+			t.Fatalf("branches = %v", st.Branches)
+		}
+
+		if _, ok := st.Errors["a"]; !ok || !strings.Contains(string(st.Results["gather"]), "from c") {
+			t.Fatalf("errors %v, gather %s", st.Errors, st.Results["gather"])
+		}
+	})
+
+	t.Run("unmet", func(t *testing.T) {
+		h := startYAML(t, fmt.Sprintf(doc, "min:2"), models())
+
+		st := h.Run(t, "f", map[string]any{})
+		if st.Status != packtrail.StatusCompleted || st.LastNode != "none" {
+			t.Fatalf("status %s at %q: %s", st.Status, st.LastNode, st.Error)
+		}
+
+		// Every agent ran to its end: none was cancelled.
+		if st.Branches["c"] != "completed" {
+			t.Fatalf("branches = %v", st.Branches)
 		}
 	})
 }
