@@ -56,6 +56,9 @@ type flowAgent struct {
 
 // Run implements natsagent.Handler.
 func (f *flowAgent) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
+	// The execution continues the caller's trace, when it sent one.
+	ctx = agentrun.RequestTraceContext(ctx)
+
 	var opts []packtrail.StartOption
 
 	callerID := ""
@@ -144,7 +147,7 @@ func (a *App) startServers(ctx context.Context, wg *sync.WaitGroup, errc chan er
 			return fmt.Errorf("stiggy: expose %s: %w", name, err)
 		}
 
-		handlers[name] = agentrun.Exposed(ag)
+		handlers[name] = agentrun.Exposed(ag, agentrun.WithLogger(a.logger), agentrun.WithTelemetry(a.telemetry()))
 	}
 
 	for _, name := range e.Flows {

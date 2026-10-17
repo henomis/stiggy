@@ -17,17 +17,22 @@ package agentrun
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
 	natsagent "github.com/henomis/phero/v2/nats"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // exposed serves an agent on the NATS Agent Protocol.
 type exposed struct {
 	a        Agent
 	sessions *sessionCache
+	logger   *slog.Logger
+	tel      *Telemetry
 }
 
 // Exposed returns a protocol handler (for phero's nats.Server) that answers
@@ -35,9 +40,19 @@ type exposed struct {
 // its long-term memory when it has one (one session for all callers; a
 // per-execution memory has no execution here and uses that same session).
 // Execution memory, routes and human input belong to flow steps and do not
-// apply.
-func Exposed(a Agent) natsagent.Handler {
-	e := &exposed{a: a}
+// apply. Of the options, WithLogger and WithTelemetry apply. A run continues
+// the trace of a traceparent header the caller sent.
+func Exposed(a Agent, opts ...Option) natsagent.Handler {
+	r := &runner{}
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	e := &exposed{a: a, logger: r.logger, tel: r.tel}
+	if e.logger == nil {
+		e.logger = slog.Default()
+	}
+
 	if a.Memory != nil {
 		e.sessions = &sessionCache{build: a.Memory}
 	}
@@ -59,7 +74,16 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	delegates, err := delegateTools(e.a.Delegates, nil, &usageMeter{})
+	ctx = RequestTraceContext(ctx)
+	tr := newRunTracer(ctx, e.logger, e.tel, modeExposed, nil)
+	delegated := newRunTracer(ctx, e.logger, e.tel, modeDelegate, tr)
+
+	defer tr.finish()
+	defer delegated.finish()
+
+	ag.SetTracer(tr)
+
+	delegates, err := delegateTools(e.a.Delegates, nil, delegated)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
@@ -94,4 +118,29 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 	}
 
 	return ag.Run(ctx, parts...)
+}
+
+// RequestTraceContext returns ctx continuing the trace of the protocol
+// request it serves: the W3C traceparent header the caller sent, if any.
+func RequestTraceContext(ctx context.Context) context.Context {
+	req, ok := natsagent.RequestFrom(ctx)
+	if !ok || req.Header == nil {
+		return ctx
+	}
+
+	// Header names are matched without case: an HTTP-minded caller may send
+	// "Traceparent".
+	carrier := propagation.MapCarrier{}
+
+	for k, v := range req.Header {
+		if lk := strings.ToLower(k); (lk == "traceparent" || lk == "tracestate") && len(v) > 0 {
+			carrier[lk] = v[0]
+		}
+	}
+
+	if carrier["traceparent"] == "" {
+		return ctx
+	}
+
+	return propagation.TraceContext{}.Extract(ctx, carrier)
 }

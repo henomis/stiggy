@@ -35,10 +35,11 @@ const (
 
 // serveHealth serves the process's health on addr:
 //   - /healthz answers 200 while the process runs (liveness);
-//   - /readyz answers 200 once the app is ready, 503 before (readiness).
+//   - /readyz answers 200 once the app is ready, 503 before (readiness);
+//   - /metrics serves metrics in the Prometheus format, when metrics is set.
 //
 // The returned stop shuts the server down.
-func serveHealth(addr string, app *stiggy.App, logger *slog.Logger) (func(), error) {
+func serveHealth(addr string, app *stiggy.App, metrics http.Handler, logger *slog.Logger) (func(), error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("-http: %w", err)
@@ -57,11 +58,15 @@ func serveHealth(addr string, app *stiggy.App, logger *slog.Logger) (func(), err
 		}
 	})
 
+	if metrics != nil {
+		mux.Handle("GET /metrics", metrics)
+	}
+
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: healthReadTimeout}
 
 	go func() {
 		if serr := srv.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
-			logger.Error("stiggy: health server", "error", serr)
+			logger.Error("stiggy: health server", "err", serr)
 		}
 	}()
 

@@ -244,8 +244,21 @@ func (w *wfc) mergeBlock(n *Node) {
 	}
 
 	policy := ""
-	if mp.Wait == "first" {
+
+	switch mp.Wait {
+	case "first":
 		policy = "any"
+	case "min":
+		least := 1
+		if mp.Min != nil {
+			least = *mp.Min
+		}
+
+		if least < 0 {
+			w.problem(n.ID, "min", "must be 0 or more")
+		}
+
+		policy = fmt.Sprintf("min:%d", least)
 	}
 
 	w.nodes = append(w.nodes, omap{}.

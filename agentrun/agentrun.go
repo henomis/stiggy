@@ -24,12 +24,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/henomis/packtrail/flow"
 	"github.com/henomis/packtrail/worker"
@@ -83,10 +83,24 @@ func WithFlows(src FlowSource) Option {
 	return func(r *runner) { r.flows = newFlowCache(src) }
 }
 
+// WithLogger sets the logger of an exposed agent's runs (default
+// slog.Default()). Flow steps log through their job's logger.
+func WithLogger(l *slog.Logger) Option {
+	return func(r *runner) { r.logger = l }
+}
+
+// WithTelemetry sets where runs report spans and metrics (default: the
+// global OpenTelemetry providers).
+func WithTelemetry(t *Telemetry) Option {
+	return func(r *runner) { r.tel = t }
+}
+
 type runner struct {
 	a        Agent
 	flows    *flowCache
 	sessions *sessionCache
+	logger   *slog.Logger
+	tel      *Telemetry
 }
 
 // Handler returns the worker handler of a.
@@ -142,9 +156,16 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, err
 	}
 
-	meter := &usageMeter{}
+	// Delegate runs are traced apart: their summaries add to the step's
+	// usage, while the step agent's own summary is its last run.
+	logger := job.Logger()
+	tr := newRunTracer(runCtx, logger, r.tel, modeStep, nil)
+	delegated := newRunTracer(runCtx, logger, r.tel, modeDelegate, tr)
 
-	ag, err := r.build(job.Node, step, schema, data, ctl, meter)
+	defer tr.finish()
+	defer delegated.finish()
+
+	ag, err := r.build(job.Node, step, schema, data, ctl, delegated)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -153,25 +174,39 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		ag.SetMemory(mem)
 	}
 
-	// Every way this run ends reports what it spent: a completion through
-	// Result.Usage, an interrupt or a failure through worker.WithUsage.
-	tr := &summaryTracer{}
 	ag.SetTracer(tr)
 
 	res, err := r.runAgent(runCtx, job, ag, prompt+h.transcript())
-	usage := addUsage(usageOf(tr.summary()), meter.total())
 
-	if q := ctl.question(); q != "" {
-		return nil, worker.WithUsage(h.interrupt(&pending{Kind: kindQuestion, Text: q}, r.a.Name, job.Node), usage)
+	return r.conclude(job, step, schema, h, ctl, cm, tr, delegated, res, err)
+}
+
+// conclude turns how an agent run ended into the step's result. Every way
+// it ends reports what it spent and did: a completion through Result.Usage
+// and Result.Summary, an interrupt or a failure through worker.WithUsage and
+// worker.WithSummary.
+func (r *runner) conclude(job *worker.Job, step spec.Step, schema map[string]any, h *hitl, ctl *control,
+	cm *chanMem, tr, delegated *runTracer, res *agent.Result, err error,
+) (*worker.Result, error) {
+	usage := addUsage(usageOf(tr.summary()), delegated.usage())
+	q := ctl.question()
+	summary := newStepSummary(r.a.Name, tr.model(r.a.Name), tr.summary(), delegated.delegateSummaries(),
+		ctl.route(), q != "", err)
+	report := func(err error) error { return worker.WithSummary(worker.WithUsage(err, usage), summary) }
+
+	if q != "" {
+		return nil, report(h.interrupt(&pending{Kind: kindQuestion, Text: q}, r.a.Name, job.Node))
 	}
 
 	if err != nil {
-		return nil, worker.WithUsage(classify(err), usage)
+		return nil, report(classify(err))
 	}
 
 	output, err := answerOutput(res.TextContent(), schema, ctl.route() != "")
 	if err != nil {
-		return nil, worker.WithUsage(err, usage)
+		summary.Error = summaryError(err)
+
+		return nil, report(err)
 	}
 
 	if step.HumanInput {
@@ -179,12 +214,15 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 			Kind: kindReview, Text: res.TextContent(), Output: output, Route: ctl.route(), Memory: cm.turn(),
 		}
 
-		return nil, worker.WithUsage(h.interrupt(p, r.a.Name, job.Node), usage)
+		return nil, report(h.interrupt(p, r.a.Name, job.Node))
 	}
 
 	result, err := h.finish(step, output, ctl.route(), usage, memoryWrite(r.a.Name, cm.turn()))
+	if result != nil {
+		result.Summary = summary
+	}
 
-	return result, worker.WithUsage(err, usage)
+	return result, report(err)
 }
 
 // jobInfo describes a job for its tools (stiggy.JobFromContext). The step
@@ -197,6 +235,7 @@ func jobInfo(job *worker.Job, agentName string) jobctx.Job {
 		StepID:  job.ExecID + "/" + job.Key + "/" + strconv.Itoa(job.Generation),
 		Attempt: job.Attempt, Index: job.Context.Index, Input: job.Context.Input, Item: job.Context.Item,
 		Channels: visibleChannels(job.Context.Channels), Store: job.Store(),
+		Logger: job.Logger().With("agent", agentName),
 	}
 }
 
@@ -247,7 +286,7 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, meter *usageMeter,
+func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, delegated *runTracer,
 ) (*agent.Agent, error) {
 	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
 	if err != nil {
@@ -264,7 +303,7 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	delegates, err := delegateTools(r.a.Delegates, data, meter)
+	delegates, err := delegateTools(r.a.Delegates, data, delegated)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
@@ -354,28 +393,6 @@ func classify(err error) error {
 	}
 
 	return err
-}
-
-// summaryTracer keeps the summary phero traces at the end of every run,
-// including runs that fail before returning a result.
-type summaryTracer struct {
-	mu   sync.Mutex
-	last *trace.RunSummary
-}
-
-func (t *summaryTracer) Trace(ev trace.Event) {
-	if e, ok := ev.(trace.AgentRunSummaryEvent); ok {
-		t.mu.Lock()
-		t.last = &e.Summary
-		t.mu.Unlock()
-	}
-}
-
-func (t *summaryTracer) summary() *trace.RunSummary {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.last
 }
 
 // usageOf returns the counters of one agent run from its summary, which is

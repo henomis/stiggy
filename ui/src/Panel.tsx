@@ -139,17 +139,25 @@ export function Panel({ project, wf, block, catalog, problems, onChange, onRenam
       )}
 
       {block.type === "merge" && (
-        <Row label="Continue when">
-          <SelectField
-            value={params.wait ?? "all"}
-            empty="all branches are done"
-            options={[
-              { value: "all", label: "all branches are done" },
-              { value: "first", label: "the first branch is done" },
-            ]}
-            onChange={(v) => set("wait", v || "all")}
-          />
-        </Row>
+        <>
+          <Row label="Continue when">
+            <SelectField
+              value={params.wait ?? "all"}
+              empty="all branches are done"
+              options={[
+                { value: "all", label: "all branches are done" },
+                { value: "first", label: "the first branch is done" },
+                { value: "min", label: "all branches are done, some may fail" },
+              ]}
+              onChange={(v) => set("wait", v || "all")}
+            />
+          </Row>
+          {params.wait === "min" && (
+            <Row label="At least" hint="How many branches must succeed; 0 continues whatever happens." error={errors("min")}>
+              <NumberField value={params.min} onChange={(v) => set("min", v)} placeholder="1" />
+            </Row>
+          )}
+        </>
       )}
 
       {block.type === "approval" && (

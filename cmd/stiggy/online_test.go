@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -177,6 +178,22 @@ expose:
 		t.Fatalf("history: %v\n%s", err, hist)
 	}
 
+	tl, _, err := runCLI(t, "timeline", "-server", nats.URL(), "-ns", "cli", st.ExecID)
+	if err != nil || !strings.Contains(tl, `"agent": "helper"`) || !strings.Contains(tl, `"tokens_in": 7`) ||
+		!strings.Contains(tl, `"outcome": "completed"`) {
+		t.Fatalf("timeline: %v\n%s", err, tl)
+	}
+
+	tlText, _, err := runCLI(t, "timeline", "-server", nats.URL(), "-ns", "cli", "-format", "text", st.ExecID)
+	if err != nil || !strings.Contains(tlText, "answer") || !strings.Contains(tlText, "helper") {
+		t.Fatalf("timeline text: %v\n%s", err, tlText)
+	}
+
+	if body := httpBody(t, "http://"+health+"/metrics"); !strings.Contains(body, "stiggy_agent_runs") ||
+		!strings.Contains(body, "packtrail_worker_jobs") {
+		t.Errorf("/metrics:\n%s", body)
+	}
+
 	rerun, _, err := runCLI(t, "rerun", "-server", nats.URL(), "-ns", "cli", st.ExecID, "answer")
 	if err != nil || strings.TrimSpace(rerun) == "" {
 		t.Fatalf("rerun: %v %q", err, rerun)
@@ -303,4 +320,27 @@ func TestRunRejectsUnknownActivity(t *testing.T) {
 	if err == nil || !strings.Contains(stderr, `unknown activity "publish"`) {
 		t.Fatalf("err = %v, stderr = %s", err, stderr)
 	}
+}
+
+func httpBody(t *testing.T, url string) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return string(b)
 }
