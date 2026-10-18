@@ -101,12 +101,12 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 		return errUsage
 	}
 
-	fleet, src, err := loadFleet(files[0], nil, stderr)
+	logger, err := cf.logger(stderr)
 	if err != nil {
 		return err
 	}
 
-	logger, err := cf.logger(stderr)
+	fleet, src, err := loadFleet(files[0], nil, stderr)
 	if err != nil {
 		return err
 	}
