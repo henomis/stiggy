@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
@@ -56,8 +57,51 @@ func Exposed(a Agent, opts ...Option) natsagent.Handler {
 	return e
 }
 
-// Run implements natsagent.Handler.
+// Request outcomes, as logged.
+const (
+	outcomeCompleted = "completed"
+	outcomeFailed    = "failed"
+)
+
+// Run implements natsagent.Handler. Every request logs a start and an end
+// line at info, on the agent's name; the end carries the outcome, the
+// duration and the usage, and a failed request ends at warn with err.
 func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
+	log := e.logger.With(keyAgent, e.a.Name)
+	log.InfoContext(ctx, "stiggy: request started")
+
+	began := time.Now()
+	tr, delegated := newRunTracer(ctx, e.logger), newRunTracer(ctx, e.logger)
+	res, err := e.run(ctx, tr, delegated, parts...)
+
+	outcome, level := outcomeCompleted, slog.LevelInfo
+	if err != nil {
+		outcome, level = outcomeFailed, slog.LevelWarn
+	}
+
+	attrs := []any{"outcome", outcome, "duration", time.Since(began)}
+
+	if tr.summary() != nil {
+		usage := addUsage(usageOf(tr.summary()), delegated.usage())
+		for _, k := range []string{CounterTokensIn, CounterTokensOut, CounterCostUSD} {
+			if v, ok := usage[k]; ok {
+				attrs = append(attrs, k, v)
+			}
+		}
+	}
+
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+
+	log.Log(ctx, level, "stiggy: request ended", attrs...)
+
+	return res, err
+}
+
+// run answers one request with a fresh agent, traced by tr and its
+// delegates by delegated.
+func (e *exposed) run(ctx context.Context, tr, delegated *runTracer, parts ...llm.ContentPart) (*agent.Result, error) {
 	// An exposed agent has no job context: the compiler keeps its system
 	// prompt and its delegates' static.
 	system, err := SystemPrompt(e.a.Name, e.a.Spec, nil)
@@ -70,10 +114,9 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	logger := e.logger
-	ag.SetTracer(newRunTracer(ctx, logger))
+	ag.SetTracer(tr)
 
-	delegates, err := delegateTools(e.a.Delegates, nil, newRunTracer(ctx, logger))
+	delegates, err := delegateTools(e.a.Delegates, nil, delegated)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}

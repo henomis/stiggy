@@ -22,9 +22,12 @@ import (
 	"testing"
 
 	"github.com/henomis/packtrail"
+	"github.com/henomis/packtrail/packtrailtest"
 	"github.com/henomis/phero/v2/llm"
+	natsagent "github.com/henomis/phero/v2/nats"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
 )
 
@@ -44,7 +47,7 @@ func newLogRecorder(level slog.Level) *logRecorder {
 func (r *logRecorder) Enabled(_ context.Context, l slog.Level) bool { return l >= r.level }
 
 func (r *logRecorder) Handle(_ context.Context, rec slog.Record) error {
-	m := map[string]string{"msg": rec.Message}
+	m := map[string]string{"msg": rec.Message, "level": rec.Level.String()}
 	for _, a := range r.attrs {
 		m[a.Key] = a.Value.String()
 	}
@@ -208,5 +211,87 @@ func TestStepLogsAtInfo(t *testing.T) {
 		if got := rec.find(msg, nil); len(got) != 0 {
 			t.Fatalf("%q logged at info: %v", msg, got)
 		}
+	}
+}
+
+// TestExposedAgentLogs checks an exposed agent logs every request it
+// answers at info, on the agent's name, with the outcome and the usage, and
+// a failed request at warn with err.
+func TestExposedAgentLogs(t *testing.T) {
+	srv := packtrailtest.Start(t)
+	nc := srv.Connect(t)
+	rec := newLogRecorder(slog.LevelInfo)
+
+	broken := llm.Func(func(context.Context, []llm.Message, ...llm.CallOption) (*llm.Result, error) {
+		return nil, errors.New("model down")
+	})
+
+	app, err := stiggy.New(nc,
+		stiggy.WithNamespace("exposed-logs"),
+		stiggy.WithLogger(slog.New(rec)),
+		stiggy.WithModel("m", stiggytest.Echo("echo: ")),
+		stiggy.WithModel("broken", broken),
+		stiggy.WithAgent("a", spec.Agent{Model: "m"}),
+		stiggy.WithAgent("b", spec.Agent{Model: "broken"}),
+		stiggy.WithExpose(spec.Expose{Owner: "o", Agents: []string{"a", "b"}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := ctxTimeout(t)
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(runCtx) }()
+
+	t.Cleanup(func() {
+		stop()
+		<-done
+	})
+
+	<-app.Ready()
+
+	ask := func(name string) error {
+		handles, derr := natsagent.NewClient(nc).Discover(ctx, natsagent.FilterByName(name))
+		if derr != nil || len(handles) != 1 {
+			t.Fatalf("discover %s: %v %v", name, handles, derr)
+		}
+
+		stream, perr := handles[0].Prompt(ctx, "hi")
+		if perr != nil {
+			return perr
+		}
+		defer stream.Close()
+
+		_, perr = stream.Text(ctx)
+
+		return perr
+	}
+
+	if err = ask("a"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rec.find("stiggy: request started", map[string]string{"agent": "a"})) != 1 {
+		t.Fatalf("no request started line: %v", rec.find("stiggy: request started", nil))
+	}
+
+	ended := rec.find("stiggy: request ended", map[string]string{"agent": "a", "outcome": "completed"})
+	if len(ended) != 1 || ended[0]["tokens_in"] == "" || ended[0]["duration"] == "" || ended[0]["err"] != "" {
+		t.Fatalf("request ended: %v", rec.find("stiggy: request ended", nil))
+	}
+
+	if err = ask("b"); err == nil {
+		t.Fatal("the broken agent answered")
+	}
+
+	failed := rec.find("stiggy: request ended", map[string]string{"agent": "b", "outcome": "failed", "level": "WARN"})
+	if len(failed) != 1 || failed[0]["err"] == "" {
+		t.Fatalf("failed request: %v", rec.find("stiggy: request ended", nil))
+	}
+
+	if got := rec.find("stiggy: llm request", nil); len(got) != 0 {
+		t.Fatalf("debug lines at info: %v", got)
 	}
 }
