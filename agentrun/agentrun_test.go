@@ -180,6 +180,11 @@ func TestParseOutput(t *testing.T) {
 		if err != nil && (!errors.Is(err, ErrNotJSONObject) || worker.IsPermanent(err)) {
 			t.Errorf("%q: err = %v, want a retryable ErrNotJSONObject", in, err)
 		}
+
+		// The error reaches logs and the execution history: no model content.
+		if err != nil && strings.Contains(err.Error(), in) {
+			t.Errorf("%q: err = %v quotes the answer", in, err)
+		}
 	}
 
 	out, _ := parseOutput("plain", nil)

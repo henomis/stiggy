@@ -258,6 +258,11 @@ func cmdAgents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return errUsage
 	}
 
+	// Nothing here logs, but the log flags are checked like everywhere else.
+	if _, err = cf.logger(stderr); err != nil {
+		return err
+	}
+
 	nc, err := cf.connect()
 	if err != nil {
 		return err
@@ -314,6 +319,11 @@ func cmdAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 
 	name, prompt := pos[0], strings.Join(pos[1:], " ")
+
+	// Nothing here logs, but the log flags are checked like everywhere else.
+	if _, err = cf.logger(stderr); err != nil {
+		return err
+	}
 
 	nc, err := cf.connect()
 	if err != nil {
