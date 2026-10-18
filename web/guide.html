@@ -68,7 +68,7 @@
 </aside>
 <main id="content">
 <h1 class="title">Guide</h1>
-<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.1.0 and packtrail v1.0.2-rc.4.</p>
+<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.1.0 and packtrail v1.0.2.</p>
 <section id="overview"><h2>Overview</h2>
 <p><strong>stiggy</strong> deploys multi-agent architectures on NATS by gluing two libraries: <a href="https://github.com/henomis/phero">phero</a> (agents, LLMs, tools, memory, the NATS Agent Protocol) and <a href="https://github.com/henomis/packtrail">packtrail</a> (a durable, event-sourced workflow engine on JetStream). It adds crews, supervisors, swarms, human review and replay on a substrate that survives crashes and scales out.</p>
 <p>A fleet is defined once, as YAML (the <code>stiggy</code> binary) or in Go (the library), and both build the same model.</p>
@@ -120,7 +120,7 @@
 # from a checkout
 make build        # bin/stiggy (static, honors GOOS/GOARCH)
 make test         # all tests with -race
-make check        # test + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.1.0 and <code>packtrail</code> v1.0.2-rc.4.</p></section>
+make check        # test + lint + vet</code></pre><p>The module depends on the released <code>phero/v2</code> v2.1.0 and <code>packtrail</code> v1.0.2.</p></section>
 <section id="quickstart"><h2>Quick start</h2>
 <pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
 <span class="c-key">namespace</span>: newsroom
