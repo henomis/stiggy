@@ -229,6 +229,43 @@ func TestBranchNeedsMerge(t *testing.T) {
 	}
 }
 
+// TestMergeMin compiles a Merge that waits for every branch and needs a
+// number of them to succeed.
+func TestMergeMin(t *testing.T) {
+	merge := func(mp project.MergeParams) *project.Result {
+		p := load(t, "testdata/support.stiggy.json")
+		p.Workflows[0].Nodes[7].Params = params(t, mp)
+
+		res, err := project.Compile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return res
+	}
+
+	two, none, bad := 2, 0, -1
+
+	for want, mp := range map[string]project.MergeParams{
+		"policy: min:1": {Wait: "min"},
+		"policy: min:2": {Wait: "min", Min: &two},
+		"policy: min:0": {Wait: "min", Min: &none},
+	} {
+		res := merge(mp)
+		if len(res.Problems) > 0 || !strings.Contains(string(res.YAML), want) {
+			t.Fatalf("want %q, problems %+v:\n%s", want, res.Problems, res.YAML)
+		}
+
+		if err := stiggyCheck(t, res.YAML); err != nil {
+			t.Fatalf("%s: %v", want, err)
+		}
+	}
+
+	if res := merge(project.MergeParams{Wait: "min", Min: &bad}); !hasProblem(res, "m", "min", "0 or more") {
+		t.Fatalf("problems: %+v", res.Problems)
+	}
+}
+
 // TestLocate maps stiggy's own errors on the generated fleet back to blocks.
 func TestLocate(t *testing.T) {
 	res := mutate(t, func(p *project.Project) {

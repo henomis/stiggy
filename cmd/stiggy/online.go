@@ -34,6 +34,7 @@ import (
 	natsagent "github.com/henomis/phero/v2/nats"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/internal/logflags"
 	"github.com/henomis/stiggy/internal/natsconn"
 	"github.com/henomis/stiggy/spec"
 )
@@ -57,6 +58,7 @@ var (
 type connFlags struct {
 	server string
 	creds  string
+	logs   *logflags.Flags
 }
 
 func (c *connFlags) register(fs *flag.FlagSet) {
@@ -67,6 +69,12 @@ func (c *connFlags) register(fs *flag.FlagSet) {
 
 	fs.StringVar(&c.server, "server", def, "NATS server URL(s)")
 	fs.StringVar(&c.creds, "creds", "", "NATS credentials file")
+	c.logs = logflags.Register(fs, "STIGGY")
+}
+
+// logger is the logger -log-level and -log-format ask for, on w.
+func (c *connFlags) logger(w io.Writer) (*slog.Logger, error) {
+	return c.logs.NewLogger(w)
 }
 
 func (c *connFlags) connect() (*nats.Conn, error) {
@@ -93,6 +101,11 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 		return errUsage
 	}
 
+	logger, err := cf.logger(stderr)
+	if err != nil {
+		return err
+	}
+
 	fleet, src, err := loadFleet(files[0], nil, stderr)
 	if err != nil {
 		return err
@@ -103,8 +116,6 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 		return err
 	}
 	defer nc.Close()
-
-	logger := slog.New(slog.NewTextHandler(stderr, nil))
 
 	opts := []stiggy.Option{stiggy.WithFleet(fleet), stiggy.WithRole(stiggy.Role(*role)), stiggy.WithLogger(logger)}
 	if names := splitList(*only); len(names) > 0 {
@@ -174,13 +185,18 @@ func cmdStart(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("-input: %w", err)
 	}
 
+	logger, err := cf.logger(stderr)
+	if err != nil {
+		return err
+	}
+
 	nc, err := cf.connect()
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
 
-	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns))
+	client, err := packtrail.NewClient(nc, packtrail.WithClientNamespace(*ns), packtrail.WithClientLogger(logger))
 	if err != nil {
 		return err
 	}
@@ -242,6 +258,11 @@ func cmdAgents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return errUsage
 	}
 
+	// Nothing here logs, but the log flags are checked like everywhere else.
+	if _, err = cf.logger(stderr); err != nil {
+		return err
+	}
+
 	nc, err := cf.connect()
 	if err != nil {
 		return err
@@ -298,6 +319,11 @@ func cmdAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 
 	name, prompt := pos[0], strings.Join(pos[1:], " ")
+
+	// Nothing here logs, but the log flags are checked like everywhere else.
+	if _, err = cf.logger(stderr); err != nil {
+		return err
+	}
 
 	nc, err := cf.connect()
 	if err != nil {

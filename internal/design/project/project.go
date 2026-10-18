@@ -266,8 +266,12 @@ type ParallelParams struct {
 
 // MergeParams say when parallel branches are done.
 type MergeParams struct {
-	// Wait is "all" or "first"; empty means all.
+	// Wait is "all" (every branch must succeed), "first" (the first success)
+	// or "min" (every branch finishes, at least Min of them succeed); empty
+	// means all.
 	Wait string `json:"wait,omitempty"`
+	// Min is how many branches must succeed with Wait "min"; default 1.
+	Min *int `json:"min,omitempty"`
 }
 
 // ApprovalParams pause the workflow for a person's decision.

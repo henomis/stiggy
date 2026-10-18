@@ -154,7 +154,7 @@ func parseOutput(text string, schema map[string]any) (any, error) {
 
 	var out map[string]any
 	if err := json.Unmarshal([]byte(stripFence(text)), &out); err != nil || out == nil {
-		return nil, fmt.Errorf("%w: %.200q", ErrNotJSONObject, text)
+		return nil, fmt.Errorf("%w (%d bytes)", ErrNotJSONObject, len(text))
 	}
 
 	return out, nil

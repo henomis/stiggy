@@ -17,6 +17,7 @@ package agentrun
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/henomis/phero/v2/agent"
@@ -28,6 +29,7 @@ import (
 type exposed struct {
 	a        Agent
 	sessions *sessionCache
+	logger   *slog.Logger
 }
 
 // Exposed returns a protocol handler (for phero's nats.Server) that answers
@@ -35,9 +37,18 @@ type exposed struct {
 // its long-term memory when it has one (one session for all callers; a
 // per-execution memory has no execution here and uses that same session).
 // Execution memory, routes and human input belong to flow steps and do not
-// apply.
-func Exposed(a Agent) natsagent.Handler {
-	e := &exposed{a: a}
+// apply. Of the options, only WithLogger applies.
+func Exposed(a Agent, opts ...Option) natsagent.Handler {
+	r := &runner{}
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	e := &exposed{a: a, logger: r.logger}
+	if e.logger == nil {
+		e.logger = slog.Default()
+	}
+
 	if a.Memory != nil {
 		e.sessions = &sessionCache{build: a.Memory}
 	}
@@ -59,7 +70,10 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	delegates, err := delegateTools(e.a.Delegates, nil, &usageMeter{})
+	logger := e.logger
+	ag.SetTracer(newRunTracer(ctx, logger))
+
+	delegates, err := delegateTools(e.a.Delegates, nil, newRunTracer(ctx, logger))
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}

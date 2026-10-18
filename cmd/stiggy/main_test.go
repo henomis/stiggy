@@ -247,3 +247,16 @@ func TestDesignServes(t *testing.T) {
 		t.Fatalf("design: %v (%s)", err, errOut.String())
 	}
 }
+
+func TestLogFlagsChecked(t *testing.T) {
+	for _, args := range [][]string{
+		{cmdNameRun, "-log-level", "loud", fixture},
+		{cmdNameStart, "-log-format", "xml", "seq"},
+		{cmdNameAgents, "-log-level", "loud"},
+		{cmdNameAsk, "-log-format", "xml", "helper", "hi"},
+	} {
+		if _, _, err := runCLI(t, args...); err == nil || !strings.Contains(err.Error(), "log") {
+			t.Errorf("%v: err %v", args, err)
+		}
+	}
+}
