@@ -426,7 +426,7 @@ docker compose -f deploy/docker-compose.yaml run --rm cli \
 <tr><td><code>jsonfile</code></td><td>One JSON line per span, with its full payload, to <code>file</code> (required)</td></tr>
 <tr><td><code>text</code></td><td>An indented span tree on stderr</td></tr>
 </tbody></table></div>
-<p><code>content</code> decides whether prompts, answers, tool arguments and results are exported. Unset, <code>otlp</code> exports none, as the semantic conventions advise, and <code>jsonfile</code> and <code>text</code> export all. <code>capture: true</code> turns it on for <code>otlp</code>, each value cut at <code>max_bytes</code> (default 64 KiB); <code>capture: false</code> turns it off for the others. Without a <code>tracing</code> section, spans are only used for the step's counters and debug lines. In Go, <code>WithTracing</code> takes any phero trace provider options instead.</p>
+<p><code>content</code> decides whether prompts, answers, tool arguments and results are exported. Unset, <code>otlp</code> exports none, as the semantic conventions advise, and <code>jsonfile</code> and <code>text</code> export all. <code>capture: true</code> turns it on for <code>otlp</code>, each value cut at <code>max_bytes</code> (default 64 KiB); <code>capture: false</code> turns it off for the others. Without a <code>tracing</code> section, spans are only used for the step's counters and debug lines. In Go, <code>WithTracing</code> takes any phero trace provider options instead. See <a href="#ex-tracing"><code>examples/tracing</code></a>.</p>
 <h3>Worker kinds</h3>
 <p><code>agent-&lt;name&gt;</code>, <code>act-&lt;name&gt;</code> and <code>remote-&lt;name&gt;</code> belong to stiggy. A plain task node with any other <code>kind</code> is left to external packtrail workers, in any language.</p></section>
 <section id="cli"><h2>CLI reference</h2>
@@ -498,6 +498,7 @@ app, err := stiggy.New(nc, stiggy.WithTool("network", post))</code></pre>
 <tr><td id="ex-mapreduce"><code>examples/mapreduce</code></td><td>Structured output, a parallel map, an append channel</td></tr>
 <tr><td id="ex-hitl"><code>examples/hitl</code></td><td><code>ask_human</code> and human review, resumed with <code>Client.Resume</code></td></tr>
 <tr><td id="ex-crew"><code>examples/crew</code></td><td>A crew with a guardrail, also served as a protocol agent</td></tr>
+<tr><td id="ex-tracing"><code>examples/tracing</code></td><td>OpenTelemetry spans of a whole execution in Jaeger (docker compose), from Go or from the fleet's <code>tracing</code> section</td></tr>
 <tr><td id="ex-remote"><code>examples/remote</code></td><td>Another team's phero agent as a step and as a delegate</td></tr>
 <tr><td id="ex-socialsim"><code>examples/socialsim</code></td><td>A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (<code>JobFromContext</code>), rounds in a loop, and a what-if fork with breaking news</td></tr>
 </tbody></table></div>

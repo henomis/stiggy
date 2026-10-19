@@ -136,6 +136,7 @@ stored in the project or the fleet.
 | [hitl](examples/hitl) | `ask_human` and human review, resumed with `Client.Resume` |
 | [crew](examples/crew) | A crew with a guardrail, also served as a protocol agent |
 | [remote](examples/remote) | Another team's phero agent as a step and as a delegate |
+| [tracing](examples/tracing) | OpenTelemetry spans of a whole execution in Jaeger (docker compose), from Go or from the fleet's `tracing:` section |
 | [socialsim](examples/socialsim) | A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (`JobFromContext`), rounds in a loop, and a what-if fork with breaking news |
 
 Each example is a plain program, written the way you would write your own:
