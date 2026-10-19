@@ -144,7 +144,7 @@ func (a *App) startServers(ctx context.Context, wg *sync.WaitGroup, errc chan er
 			return fmt.Errorf("stiggy: expose %s: %w", name, err)
 		}
 
-		handlers[name] = agentrun.Exposed(ag, agentrun.WithLogger(a.logger))
+		handlers[name] = agentrun.Exposed(ag, agentrun.WithLogger(a.logger), agentrun.WithTracing(a.tracing))
 	}
 
 	for _, name := range e.Flows {

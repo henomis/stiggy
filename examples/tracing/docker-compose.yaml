@@ -1,0 +1,19 @@
+# What examples/tracing talks to: NATS with JetStream, and Jaeger, which
+# takes OTLP spans (4317 gRPC, 4318 HTTP) and shows them at
+# http://localhost:16686.
+#
+#   docker compose -f examples/tracing/docker-compose.yaml up -d
+#   go run ./examples/tracing
+#   docker compose -f examples/tracing/docker-compose.yaml down
+services:
+  nats:
+    image: nats:2.12
+    command: ["-js"]
+    ports: ["4222:4222"]
+
+  jaeger:
+    image: jaegertracing/jaeger:2.10.0
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP

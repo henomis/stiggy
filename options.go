@@ -24,6 +24,7 @@ import (
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/embedding"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/trace"
 	"github.com/henomis/phero/v2/vectorstore"
 
 	"github.com/henomis/stiggy/registry"
@@ -65,6 +66,8 @@ type options struct {
 	engineOpts []packtrail.Option
 	workerOpts []worker.Option
 	only       []string
+	tracing    []trace.Option
+	traced     bool
 }
 
 func newOptions() *options {
@@ -119,6 +122,15 @@ func WithFleet(f *spec.Fleet) Option {
 			if err := mergeExpose(&o.fleet, *f.Expose); err != nil {
 				return err
 			}
+		}
+
+		if f.Tracing != nil {
+			if o.fleet.Tracing != nil {
+				return fmt.Errorf("%w: tracing defined twice", ErrOption)
+			}
+
+			t := *f.Tracing
+			o.fleet.Tracing = &t
 		}
 
 		return errors.Join(
@@ -326,6 +338,24 @@ func WithRole(r Role) Option {
 func WithLogger(l *slog.Logger) Option {
 	return func(o *options) error {
 		o.logger = l
+
+		return nil
+	}
+}
+
+// WithTracing exports the spans of agent steps and exposed agents through a
+// phero trace provider built from opts, typically an exporter:
+//
+//	exp := pherootel.New(tp)
+//	stiggy.WithTracing(trace.WithIDSource(exp.IDSource()), trace.WithProcessor(exp))
+//
+// The App adds the processor of its debug lines first and shuts the provider
+// down when Run returns; an OTel TracerProvider behind it is the caller's to
+// shut down. It replaces the fleet's `tracing:` section.
+func WithTracing(opts ...trace.Option) Option {
+	return func(o *options) error {
+		o.tracing = append(o.tracing, opts...)
+		o.traced = true
 
 		return nil
 	}

@@ -35,6 +35,24 @@ import (
 	"github.com/henomis/stiggy/spec"
 )
 
+// Names of the rules of the choices patterns generate. They are recorded on
+// the execution's ChoiceEvaluated events, so its history tells why a loop
+// ended: a passing verdict, or no rounds left.
+const (
+	// RulePassed: the checker accepted the output (evaluator-optimizer,
+	// crew guardrail).
+	RulePassed = "passed"
+	// RuleNextRound: another round runs (evaluator-optimizer, debate).
+	RuleNextRound = "next_round"
+	// RuleMaxRounds: the rounds are used up (evaluator-optimizer: the last
+	// output is the answer; debate: the judge decides).
+	RuleMaxRounds = "max_rounds"
+	// RuleRetry: a crew task runs again after its guardrail rejected it.
+	RuleRetry = "retry"
+	// RuleMaxRetries: the guardrail's retries are used up; the crew goes on.
+	RuleMaxRetries = "max_retries"
+)
+
 // Expand returns the flow of a pattern.
 func Expand(name string, p spec.Pattern) (*flow.Flow, error) {
 	if err := checkRetry("retry", p.Retry); err != nil {

@@ -1,0 +1,44 @@
+# The fleet of examples/tracing. `go run ./examples/tracing` embeds it;
+# `stiggy run examples/tracing/fleet.yaml` serves it as is, exporting its
+# spans as the tracing section says.
+namespace: example-tracing
+models:
+  main:
+    provider: ollama
+    model: gemma4:cloud
+    retries: 5
+    rate_limit: {max_concurrent: 1}
+agents:
+  checker:
+    model: main
+    role: Fact checker
+    goal: Say whether one claim about NATS is accurate, in one sentence.
+    description: Checks one claim and says whether it is accurate.
+  researcher:
+    model: main
+    role: Researcher
+    goal: Collect three accurate facts about the topic. Check the one you are least sure of with the fact checker.
+    delegates: [checker]
+  writer:
+    model: main
+    role: Writer
+    goal: Write one short paragraph from the research, or revise it as the editor asks.
+  editor:
+    model: main
+    role: Editor
+    goal: Send the draft back to the writer at most once, when it can clearly improve; otherwise approve it in one sentence.
+flows:
+  article:
+    max_steps: 8
+    output: "{article: results.write.text}"
+    nodes:
+      - {id: research, type: task, agent: researcher, prompt: "Research {{.input.topic}}.", next: write}
+      - {id: write, type: task, agent: writer, next: review}
+      - {id: review, type: task, agent: editor, routes: [write]}
+# Jaeger from docker-compose.yaml takes OTLP over plain HTTP on 4318.
+tracing:
+  exporter: otlp
+  endpoint: localhost:4318
+  insecure: true
+  service_name: example-tracing
+  content: {capture: true} # prompts and answers too: fine locally, think twice in production

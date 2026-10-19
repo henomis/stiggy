@@ -29,10 +29,12 @@ import (
 
 	"github.com/henomis/packtrail"
 	"github.com/henomis/packtrail/worker"
+	"github.com/henomis/phero/v2/trace"
 
 	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/compile"
 	"github.com/henomis/stiggy/internal/stepio"
+	"github.com/henomis/stiggy/internal/tracing"
 	"github.com/henomis/stiggy/registry"
 	"github.com/henomis/stiggy/spec"
 )
@@ -52,6 +54,8 @@ var (
 const (
 	provisionRetryFirst = 200 * time.Millisecond
 	provisionRetryMax   = 5 * time.Second
+	// tracingFlushTimeout bounds the export of the last spans at shutdown.
+	tracingFlushTimeout = 10 * time.Second
 
 	provisionRetryFactor = 2
 )
@@ -65,6 +69,9 @@ type App struct {
 	plan   *compile.Plan
 	client *packtrail.Client
 	logger *slog.Logger
+	// tracing is the provider of every step's and exposed agent's spans,
+	// built by Run.
+	tracing *trace.Provider
 
 	ready       chan struct{}
 	ran         atomic.Bool
@@ -153,7 +160,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	asm := newAssembly(a)
 
-	err := a.start(ctx, engCtx, &engWG, &wkWG, &srvWG, errc, asm)
+	stopTracing, err := a.startTracing(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer stopTracing()
+
+	err = a.start(ctx, engCtx, &engWG, &wkWG, &srvWG, errc, asm)
 	if err == nil {
 		close(a.ready)
 
@@ -190,6 +204,37 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	return err
+}
+
+// startTracing builds the span provider: the debug-line processor, then
+// WithTracing's options or else the fleet's exporter. The returned stop
+// flushes it, once every job and request has ended.
+func (a *App) startTracing(ctx context.Context) (func(), error) {
+	opts := []trace.Option{trace.WithProcessor(agentrun.NewLogProcessor())}
+	flush := func(context.Context) error { return nil }
+
+	switch {
+	case a.opts.traced:
+		opts = append(opts, a.opts.tracing...)
+	case a.fleet.Tracing != nil:
+		exp, err := tracing.New(ctx, a.fleet.Tracing, a.plan.Namespace)
+		if err != nil {
+			return nil, fmt.Errorf("stiggy: %w", err)
+		}
+
+		opts, flush = append(opts, exp.Options...), exp.Shutdown
+	}
+
+	a.tracing = trace.NewProvider(opts...)
+
+	return func() {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tracingFlushTimeout)
+		defer cancel()
+
+		if err := errors.Join(a.tracing.Shutdown(sctx), flush(sctx)); err != nil {
+			a.logger.WarnContext(ctx, "stiggy: tracing shutdown", "err", err)
+		}
+	}, nil
 }
 
 func (a *App) start(ctx, engCtx context.Context, engWG, wkWG, srvWG *sync.WaitGroup, errc chan error,
@@ -431,7 +476,8 @@ func (a *App) handlers(ctx context.Context, asm *assembly) (map[string]worker.Ha
 			return nil, fmt.Errorf("stiggy: %w", err)
 		}
 
-		out[wk.Kind] = logged(agentrun.Handler(ag, agentrun.WithFlows(a.client)), "agent", wk.Agent)
+		out[wk.Kind] = logged(agentrun.Handler(ag, agentrun.WithFlows(a.client),
+			agentrun.WithTracing(a.tracing)), "agent", wk.Agent)
 	}
 
 	return out, nil

@@ -58,10 +58,12 @@
           "type": "choice",
           "rules": [
             {
+              "name": "next_round",
               "when": "visits[\"round\"] \u003c 2",
               "to": "round"
             },
             {
+              "name": "max_rounds",
               "default": true,
               "to": "judge"
             }
@@ -174,14 +176,17 @@
           "type": "choice",
           "rules": [
             {
+              "name": "passed",
               "when": "results[\"draft_guard\"].valid == true",
               "to": "$end"
             },
             {
+              "name": "retry",
               "when": "visits[\"draft\"] \u003c= 1",
               "to": "draft"
             },
             {
+              "name": "max_retries",
               "default": true,
               "to": "$end"
             }
@@ -305,14 +310,17 @@
           "type": "choice",
           "rules": [
             {
+              "name": "passed",
               "when": "results[\"evaluate\"].pass == true",
               "to": "$end"
             },
             {
+              "name": "next_round",
               "when": "visits[\"generate\"] \u003c 2",
               "to": "generate"
             },
             {
+              "name": "max_rounds",
               "default": true,
               "to": "$end"
             }

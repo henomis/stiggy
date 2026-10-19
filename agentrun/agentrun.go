@@ -42,14 +42,6 @@ import (
 	"github.com/henomis/stiggy/spec"
 )
 
-// Usage counters every agent step reports. Flows cap them with `budget:`.
-const (
-	CounterAgentSteps = "agent_steps"
-	CounterTokensIn   = "tokens_in"
-	CounterTokensOut  = "tokens_out"
-	CounterCostUSD    = "cost_usd"
-)
-
 // ErrAgentMismatch is returned when a job's step names another agent than
 // the one the worker runs: the worker kind and the meta disagree.
 var ErrAgentMismatch = errors.New("agentrun: the step names another agent")
@@ -89,22 +81,39 @@ func WithLogger(l *slog.Logger) Option {
 	return func(r *runner) { r.logger = l }
 }
 
+// WithTracing sets the provider of the runs' spans. It should include
+// NewLogProcessor, or the debug lines are lost. Without it, spans are only
+// logged.
+func WithTracing(p *trace.Provider) Option {
+	return func(r *runner) { r.tracing = p }
+}
+
 type runner struct {
 	a        Agent
 	flows    *flowCache
 	sessions *sessionCache
 	logger   *slog.Logger
+	tracing  *trace.Provider
+}
+
+func newRunner(a Agent, opts []Option) *runner {
+	r := &runner{a: a}
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	if r.tracing == nil {
+		r.tracing = defaultProvider()
+	}
+
+	return r
 }
 
 // Handler returns the worker handler of a.
 func Handler(a Agent, opts ...Option) worker.Handler {
-	r := &runner{a: a}
+	r := newRunner(a, opts)
 	if a.Memory != nil {
 		r.sessions = &sessionCache{build: a.Memory}
-	}
-
-	for _, opt := range opts {
-		opt(r)
 	}
 
 	return r.handle
@@ -130,7 +139,31 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, err
 	}
 
+	// The step's span is the parent of the agent's run: its totals are what
+	// the attempt spent, delegates included, however the run ends.
+	ctx = stepContext(ctx, r.tracing, job, r.a.Name)
+	ctx, span := trace.Start(ctx, spanStep+" "+job.Node, &trace.Custom{Type: spanStep, Data: stepData(job)})
+	obs := observe(ctx, span)
+
+	if job.Traceparent == "" {
+		obs.rep.Add(slog.String(trace.LogKeyTraceID, span.Context().TraceID.String()))
+	}
+
+	obs.review(h, job)
+
+	res, err := r.attempt(ctx, job, step, schema, h, obs)
+	span.End(endErr(err))
+
+	return res, err
+}
+
+// attempt runs the step's agent once, under the step's span.
+func (r *runner) attempt(ctx context.Context, job *worker.Job, step spec.Step, schema map[string]any, h *hitl,
+	obs *observer,
+) (*worker.Result, error) {
 	if p := h.approved; p != nil {
+		obs.routed(step, p.Route, p.RouteReason)
+
 		return h.finish(step, p.Output, p.Route, nil, memoryWrite(r.a.Name, p.Memory))
 	}
 
@@ -139,22 +172,15 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 		return nil, err
 	}
 
-	runCtx, cancel := context.WithCancelCause(jobctx.With(ctx, jobInfo(job, r.a.Name)))
-	defer cancel(nil)
-
-	ctl := &control{cancel: cancel}
+	runCtx := jobctx.With(ctx, jobInfo(job, r.a.Name))
+	ctl := &control{}
 
 	mem, cm, err := r.memoryFor(ctx, job, data)
 	if err != nil {
 		return nil, err
 	}
 
-	// Delegate runs are traced apart: their summaries add to the step's
-	// usage, while the step agent's own summary is its last run.
-	logger := job.Logger()
-	delegated := newRunTracer(runCtx, logger)
-
-	ag, err := r.build(job.Node, step, schema, data, ctl, delegated)
+	ag, err := r.build(job.Node, step, schema, data, ctl)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -165,34 +191,38 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 
 	// Every way this run ends reports what it spent: a completion through
 	// Result.Usage, an interrupt or a failure through worker.WithUsage.
-	tr := newRunTracer(runCtx, logger)
-	ag.SetTracer(tr)
-
 	res, err := r.runAgent(runCtx, job, ag, prompt+h.transcript())
-	usage := addUsage(usageOf(tr.summary()), delegated.usage())
+
+	totals := obs.span.Totals()
+	usage := usageOf(&totals)
+	obs.run(res, err, &totals)
 
 	if q := ctl.question(); q != "" {
 		return nil, worker.WithUsage(h.interrupt(&pending{Kind: kindQuestion, Text: q}, r.a.Name, job.Node), usage)
 	}
 
 	if err != nil {
-		return nil, worker.WithUsage(classify(err), usage)
+		return nil, worker.WithUsage(classify(err, maxIterations(r.a.Spec)), usage)
 	}
 
-	output, err := answerOutput(res.TextContent(), schema, ctl.route() != "")
+	route, reason := ctl.route()
+	obs.routed(step, route, reason)
+
+	output, err := answerOutput(res.TextContent(), schema, route != "")
 	if err != nil {
 		return nil, worker.WithUsage(err, usage)
 	}
 
 	if step.HumanInput {
 		p := &pending{
-			Kind: kindReview, Text: res.TextContent(), Output: output, Route: ctl.route(), Memory: cm.turn(),
+			Kind: kindReview, Text: res.TextContent(), Output: output, Route: route, RouteReason: reason,
+			Memory: cm.turn(),
 		}
 
 		return nil, worker.WithUsage(h.interrupt(p, r.a.Name, job.Node), usage)
 	}
 
-	result, err := h.finish(step, output, ctl.route(), usage, memoryWrite(r.a.Name, cm.turn()))
+	result, err := h.finish(step, output, route, usage, memoryWrite(r.a.Name, cm.turn()))
 
 	return result, worker.WithUsage(err, usage)
 }
@@ -258,7 +288,7 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control, delegated *runTracer,
+func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control,
 ) (*agent.Agent, error) {
 	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
 	if err != nil {
@@ -275,7 +305,7 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	delegates, err := delegateTools(r.a.Delegates, data, delegated)
+	delegates, err := delegateTools(r.a.Delegates, data)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
@@ -346,12 +376,22 @@ func SystemPrompt(name string, s spec.Agent, data map[string]any) (string, error
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// maxIterations is the iteration limit of an agent built from s.
+func maxIterations(s spec.Agent) int {
+	if s.MaxIterations > 0 {
+		return s.MaxIterations
+	}
+
+	return agent.DefaultMaxIterations
+}
+
 // classify marks the errors no retry can fix as permanent. Everything else,
 // rate limits included, is left to the node's retry policy (the
-// provider's retry-after cannot be passed on).
-func classify(err error) error {
+// provider's retry-after is reported, not passed on). maxIterations is the
+// agent's limit, for the message of a run that reached it.
+func classify(err error, maxIterations int) error {
 	if errors.Is(err, agent.ErrMaxIterationsReached) {
-		return worker.Permanent(err)
+		return worker.Permanent(fmt.Errorf("%s: reached %d: %w", trace.StopMaxIterations, maxIterations, err))
 	}
 
 	var pe *llm.ProviderError
@@ -365,24 +405,4 @@ func classify(err error) error {
 	}
 
 	return err
-}
-
-// usageOf returns the counters of one agent run from its summary, which is
-// nil when the run never started.
-func usageOf(sum *trace.RunSummary) map[string]float64 {
-	u := map[string]float64{CounterAgentSteps: 1}
-
-	if sum == nil {
-		return u
-	}
-
-	s := sum.Usage
-	u[CounterTokensIn] = float64(s.InputTokens)
-	u[CounterTokensOut] = float64(s.OutputTokens)
-
-	if s.CostUSD > 0 {
-		u[CounterCostUSD] = s.CostUSD
-	}
-
-	return u
 }

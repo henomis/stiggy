@@ -136,6 +136,7 @@ stored in the project or the fleet.
 | [hitl](examples/hitl) | `ask_human` and human review, resumed with `Client.Resume` |
 | [crew](examples/crew) | A crew with a guardrail, also served as a protocol agent |
 | [remote](examples/remote) | Another team's phero agent as a step and as a delegate |
+| [tracing](examples/tracing) | OpenTelemetry spans of a whole execution in Jaeger (docker compose), from Go or from the fleet's `tracing:` section |
 | [socialsim](examples/socialsim) | A small social simulation: one persona agent per map item through templated system prompts and memory sessions, Go tools that know their caller (`JobFromContext`), rounds in a loop, and a what-if fork with breaking news |
 
 Each example is a plain program, written the way you would write your own:
@@ -177,11 +178,30 @@ stiggy ask -owner newsroom writer "Write two lines about NATS."
 NATS. `-owner` is needed only when several owners serve the same name.
 
 `/healthz` and `/readyz` serve health checks. Logs share packtrail's keys
-(`exec`, `node`, `attempt`, `agent`, ...): every step logs its start and end
-with the outcome, duration and tokens, and `-log-level debug` adds each model
-and tool call. `-log-format json` (or `STIGGY_LOG_LEVEL`, `STIGGY_LOG_FORMAT`)
-suits log collectors. [deploy/](deploy) has a
-Dockerfile and a docker-compose setup. To operate executions, use
+(`exec`, `node`, `attempt`, `agent`, `trace_id`, ...). Every step logs its
+start and its end. The end line carries the outcome, duration, tokens, stop
+reason, model and tool time, time to first token, the route and why it was
+taken, and who answered a human review. An exposed agent does the same for
+every request it answers, and `-log-level debug` adds each model and tool call.
+`-log-format json` (or `STIGGY_LOG_LEVEL`, `STIGGY_LOG_FORMAT`) suits log
+collectors.
+
+A `tracing:` section exports OpenTelemetry spans over OTLP/HTTP (GenAI
+semantic conventions; prompts and answers only with `content: {capture: true}`),
+or writes them to a JSON-lines file or stderr. Each step's agent run, model
+calls, tool calls and delegates nest under a `stiggy.step` span, tagged with
+the execution, node and generation, which joins the execution's traceparent
+when it has one:
+
+```yaml
+tracing: {exporter: otlp, endpoint: localhost:4318, insecure: true}
+```
+
+Usage counters (`tokens_in`, `tokens_cache_read`, `tokens_reasoning`,
+`cost_usd`, `llm_calls`, `tool_calls`, per agent and per model) feed packtrail
+budgets.
+
+[deploy/](deploy) has a Dockerfile and a docker-compose setup. To operate executions, use
 `stiggy get | history | progress | signal | resume | update | cancel | fork | rerun`,
 or packtrail's CLI and `packtrail-ui` on the fleet's namespace.
 

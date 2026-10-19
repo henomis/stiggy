@@ -222,9 +222,9 @@ func addTask(b *builder, t spec.Task, context []string, next string) error {
 	}
 
 	b.add(flow.Node{ID: check, Type: flow.NodeChoice, Rules: []flow.Rule{
-		{When: fmt.Sprintf("%s.valid == true", resultOf(guard)), To: after},
-		{When: fmt.Sprintf("visits[%q] <= %d", t.ID, retries), To: t.ID},
-		{Default: true, To: after},
+		{Name: RulePassed, When: fmt.Sprintf("%s.valid == true", resultOf(guard)), To: after},
+		{Name: RuleRetry, When: fmt.Sprintf("visits[%q] <= %d", t.ID, retries), To: t.ID},
+		{Name: RuleMaxRetries, Default: true, To: after},
 	}})
 
 	return nil

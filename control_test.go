@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -379,10 +380,12 @@ func TestStreaming(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	logs := newLogRecorder(slog.LevelInfo)
 	h := stiggytest.Start(t,
 		stiggy.WithModel("m", stiggytest.Echo("streamed: ")),
 		stiggy.WithAgent("talker", spec.Agent{Model: "m", Stream: true}),
 		stiggy.WithFlow(&flow.Flow{Name: "talk", Nodes: []flow.Node{step}}),
+		stiggy.WithLogger(slog.New(logs)),
 	)
 
 	ctx := ctxTimeout(t)
@@ -408,6 +411,16 @@ func TestStreaming(t *testing.T) {
 
 	if !strings.HasPrefix(text.String(), "streamed: ") {
 		t.Fatalf("streamed text = %q", text.String())
+	}
+
+	// The step's end line has the time to the first token.
+	if _, err = h.Client.Wait(ctx, "talk-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ended := logs.find("stiggy: step ended", map[string]string{"exec": "talk-1"})
+	if len(ended) != 1 || ended[0]["ttft"] == "" {
+		t.Fatalf("step ended: %v", ended)
 	}
 }
 

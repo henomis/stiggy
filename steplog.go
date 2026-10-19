@@ -23,6 +23,7 @@ import (
 	"github.com/henomis/packtrail/worker"
 
 	"github.com/henomis/stiggy/agentrun"
+	"github.com/henomis/stiggy/internal/report"
 )
 
 // Step outcomes, as logged.
@@ -36,12 +37,15 @@ const (
 // logged wraps the handler of a stiggy step so every attempt logs a start
 // and an end line through the job's logger (exec, flow, node, key, attempt),
 // with role naming what runs the step: agent, remote or activity.
-// The end line carries the outcome, the duration, the usage and the route.
+// The end line carries the outcome, the duration, the usage and the route,
+// then what the handler reported about the attempt (internal/report): stop
+// reason, latencies, route reason, review, provider errors.
 func logged(h worker.Handler, role, name string) worker.Handler {
 	return func(ctx context.Context, job *worker.Job) (*worker.Result, error) {
 		log := job.Logger().With(role, name)
 		log.InfoContext(ctx, "stiggy: step started")
 
+		ctx, rep := report.With(ctx)
 		began := time.Now()
 		res, err := h(ctx, job)
 
@@ -57,6 +61,12 @@ func logged(h worker.Handler, role, name string) worker.Handler {
 
 		if res != nil && res.Next != "" {
 			attrs = append(attrs, "route", res.Next)
+		}
+
+		for _, a := range rep.Attrs() {
+			if a.Key != "route" {
+				attrs = append(attrs, a)
+			}
 		}
 
 		level := slog.LevelInfo

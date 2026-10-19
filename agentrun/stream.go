@@ -96,7 +96,8 @@ func runStreaming(ctx context.Context, job *worker.Job, name string, ag *agent.A
 
 	for ev, err := range ag.RunStream(ctx, llm.Text(prompt)) {
 		if err != nil {
-			return nil, err
+			// The partial result carries the run's Summary.
+			return ev.Result, err
 		}
 
 		switch ev.Type {

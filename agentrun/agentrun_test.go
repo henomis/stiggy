@@ -113,9 +113,14 @@ func TestClassify(t *testing.T) {
 		fmt.Errorf("wrapped: %w", pe(403)):     true,
 		errors.New("connection reset by peer"): false,
 	} {
-		if got := worker.IsPermanent(classify(err)); got != permanent {
+		if got := worker.IsPermanent(classify(err, 7)); got != permanent {
 			t.Errorf("%v: permanent = %v, want %v", err, got, permanent)
 		}
+	}
+
+	err := classify(agent.ErrMaxIterationsReached, 7)
+	if !errors.Is(err, agent.ErrMaxIterationsReached) || !strings.HasPrefix(err.Error(), "max_iterations: reached 7") {
+		t.Errorf("max iterations: err = %v", err)
 	}
 }
 
@@ -234,7 +239,7 @@ func TestParseReply(t *testing.T) {
 }
 
 func TestSteeringTools(t *testing.T) {
-	ctl := &control{cancel: func(error) {}}
+	ctl := &control{}
 
 	tools, err := ctl.tools(spec.Step{Routes: []string{"plan", "publish-now", spec.RouteHuman}})
 	if err != nil {
@@ -266,8 +271,8 @@ func TestSteeringTools(t *testing.T) {
 		t.Errorf("route result = %q, want a handoff note request", got)
 	}
 
-	if ctl.route() != "plan" {
-		t.Errorf("route = %q, want plan", ctl.route())
+	if route, reason := ctl.route(); route != "plan" || reason != "need facts" {
+		t.Errorf("route = %q (%q), want plan (need facts)", route, reason)
 	}
 
 	if in := ctl.instructions(spec.Step{Routes: []string{"plan"}}); !strings.Contains(in, "handoff note") {

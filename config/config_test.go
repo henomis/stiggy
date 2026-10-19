@@ -151,6 +151,33 @@ flows:
 // Crews and patterns compile into flows, which must not hold environment
 // values (a secret would end up in the versioned definition): a reference
 // is an error that points at it, not a silent literal.
+// TestTracingSection checks the tracing section decodes, with ${VAR} in its
+// headers, and that its keys are checked like any other.
+func TestTracingSection(t *testing.T) {
+	doc := `
+tracing:
+  exporter: otlp
+  endpoint: https://otel.example.com
+  headers: {authorization: "Bearer ${TOKEN}"}
+  content: {capture: true, max_bytes: 1024}
+`
+
+	f, _, err := Parse([]byte(doc), WithLookupEnv(lookup(map[string]string{"TOKEN": "t0k"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tr := f.Tracing
+	if tr == nil || tr.Exporter != "otlp" || tr.Headers["authorization"] != "Bearer t0k" ||
+		tr.Content == nil || tr.Content.Capture == nil || !*tr.Content.Capture || tr.Content.MaxBytes != 1024 {
+		t.Fatalf("tracing = %+v", tr)
+	}
+
+	if _, _, err = Parse([]byte("tracing: {exporter: text, sampler: 0.5}\n")); err == nil {
+		t.Fatal("an unknown tracing key was accepted")
+	}
+}
+
 func TestEnvRejectedInCrewsAndPatterns(t *testing.T) {
 	doc := `
 agents: {a: {model: m}}
