@@ -97,9 +97,3 @@ require (
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-// TODO(release v0.3.1): drop these replaces once phero v2.2.0 and packtrail
-// v1.0.3 are tagged.
-replace github.com/henomis/phero/v2 => ../phero
-
-replace github.com/henomis/packtrail => ../packtrail

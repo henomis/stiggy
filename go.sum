@@ -141,6 +141,10 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 h1:5VipnvEpbqr2gA2VbM+nYVbkIF28c5ZQfqCBQ5g2xfk=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDec4pTvgMSEixRuQKPTMH2bNs=
+github.com/henomis/packtrail v1.0.3 h1:Ke2L1l78PuXfyBzhhAaDV7QjsfqSKpRf2UlT2EE48Pk=
+github.com/henomis/packtrail v1.0.3/go.mod h1:eymIY9g3+cih4Cf+3X7xF+4Bvc4Qb54R7ZSm2KZ1mlw=
+github.com/henomis/phero/v2 v2.2.0 h1:CWCg9DgnqcQsC7SYR9fzTynoL73Z/L90rBv8+aGaZ7s=
+github.com/henomis/phero/v2 v2.2.0/go.mod h1:RllYlTqvGiroFxLEY6cb6+uj9iE52a42Zwf1AZX4wVg=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcIi21E=
 github.com/invopop/jsonschema v0.13.0/go.mod h1:ffZ5Km5SWWRAIN6wbDXItl95euhFz2uON45H2qjYt+0=
