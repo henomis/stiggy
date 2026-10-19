@@ -116,6 +116,7 @@ func opsSignal(fs *flag.FlagSet) opsRun {
 func opsResume(fs *flag.FlagSet) opsRun {
 	value := fs.String("value", "null",
 		`resume value (JSON): an answer ("text"), {"approve": true} or {"feedback": "..."}`)
+	by := fs.String("by", "", "who answers (recorded on the execution and in the step's log and spans)")
 
 	return func(ctx context.Context, c *packtrail.Client, pos []string, _ io.Writer) error {
 		v, err := rawJSON("-value", *value)
@@ -123,7 +124,12 @@ func opsResume(fs *flag.FlagSet) opsRun {
 			return err
 		}
 
-		return c.Resume(ctx, pos[0], pos[1], v)
+		var opts []packtrail.ResumeOption
+		if *by != "" {
+			opts = append(opts, packtrail.WithResumedBy(*by))
+		}
+
+		return c.Resume(ctx, pos[0], pos[1], v, opts...)
 	}
 }
 

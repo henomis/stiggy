@@ -517,6 +517,27 @@ schedules:
 				`8: schedules.list.input: input must be an object`,
 			},
 		},
+		{
+			name: "tracing",
+			yaml: `
+tracing:
+  exporter: jsonfile
+  endpoint: localhost:4318
+  content: {max_bytes: -1}
+`,
+			want: []string{
+				`2: tracing.file: required by the jsonfile exporter`,
+				`4: tracing.endpoint: only for the otlp exporter`,
+				`5: tracing.content.max_bytes: must not be negative`,
+			},
+		},
+		{
+			name: "tracing exporter",
+			yaml: `
+tracing: {exporter: zipkin}
+`,
+			want: []string{`2: tracing.exporter: unknown exporter "zipkin"`},
+		},
 	}
 
 	for _, tc := range cases {

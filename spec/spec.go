@@ -72,6 +72,9 @@ type Fleet struct {
 	Patterns map[string]Pattern `yaml:"patterns,omitempty" json:"patterns,omitempty"`
 	// Schedules start flows on a cron, by name.
 	Schedules map[string]Schedule `yaml:"schedules,omitempty" json:"schedules,omitempty"`
+	// Tracing exports the spans of agent steps and exposed agents: agent
+	// runs, model calls, tool calls, delegates. Absent means no export.
+	Tracing *Tracing `yaml:"tracing,omitempty" json:"tracing,omitempty"`
 }
 
 // Model configures an LLM client.
@@ -319,6 +322,51 @@ type Expose struct {
 	// is the prompt, as a JSON object or {"prompt": text}) and the answer is
 	// the execution's output.
 	Flows []string `yaml:"flows,omitempty" json:"flows,omitempty"`
+}
+
+// Tracing exporters.
+const (
+	// TracingOTLP exports OpenTelemetry spans over OTLP/HTTP, following the
+	// GenAI semantic conventions.
+	TracingOTLP = "otlp"
+	// TracingJSONFile writes one JSON line per span to a file.
+	TracingJSONFile = "jsonfile"
+	// TracingText prints an indented span tree on stderr.
+	TracingText = "text"
+)
+
+// Tracing configures where a fleet's spans go.
+type Tracing struct {
+	// Exporter is otlp, jsonfile or text.
+	Exporter string `yaml:"exporter" json:"exporter"`
+	// Endpoint is the OTLP/HTTP collector, as host:port or as a base URL,
+	// like OTEL_EXPORTER_OTLP_ENDPOINT: spans go to its path + /v1/traces
+	// (a URL already ending in /v1/traces is kept). Empty uses the
+	// OTEL_EXPORTER_OTLP_* environment variables (default localhost:4318).
+	// otlp only.
+	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// Insecure sends OTLP over plain HTTP. otlp only.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+	// Headers are sent with every OTLP export (authentication). otlp only.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	// ServiceName is the OTel service.name; empty means OTEL_SERVICE_NAME,
+	// else the fleet's namespace. otlp only.
+	ServiceName string `yaml:"service_name,omitempty" json:"service_name,omitempty"`
+	// File is the jsonfile exporter's output. jsonfile only.
+	File string `yaml:"file,omitempty" json:"file,omitempty"`
+	// Content decides whether prompts, answers, tool arguments and results
+	// are exported.
+	Content *TracingContent `yaml:"content,omitempty" json:"content,omitempty"`
+}
+
+// TracingContent is the content policy of a tracing exporter.
+type TracingContent struct {
+	// Capture exports message content. Unset, otlp captures none (as the
+	// semantic conventions advise) and jsonfile and text capture all.
+	Capture *bool `yaml:"capture,omitempty" json:"capture,omitempty"`
+	// MaxBytes bounds each captured value; 0 means 64 KiB for otlp and no
+	// bound for jsonfile and text.
+	MaxBytes int `yaml:"max_bytes,omitempty" json:"max_bytes,omitempty"`
 }
 
 // OwnerOrDefault returns the protocol owner of exposed agents and flows.

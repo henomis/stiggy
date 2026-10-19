@@ -154,9 +154,9 @@ func EvaluatorOptimizer(name string, p spec.Pattern) (*flow.Flow, error) {
 	ev.Next = nodeCheck
 
 	b.add(flow.Node{ID: nodeCheck, Type: flow.NodeChoice, Rules: []flow.Rule{
-		{When: fmt.Sprintf("%s.pass == true", resultOf(nodeEvaluate)), To: flow.End},
-		{When: fmt.Sprintf("visits[%q] < %d", nodeGenerate, rounds), To: nodeGenerate},
-		{Default: true, To: flow.End},
+		{Name: RulePassed, When: fmt.Sprintf("%s.pass == true", resultOf(nodeEvaluate)), To: flow.End},
+		{Name: RuleNextRound, When: fmt.Sprintf("visits[%q] < %d", nodeGenerate, rounds), To: nodeGenerate},
+		{Name: RuleMaxRounds, Default: true, To: flow.End},
 	}})
 
 	b.f.Output = resultOf(nodeGenerate)
@@ -203,8 +203,8 @@ func Debate(name string, p spec.Pattern) (*flow.Flow, error) {
 
 	b.add(flow.Node{ID: nodeGather, Type: flow.NodeJoin, Next: nodeNextRound})
 	b.add(flow.Node{ID: nodeNextRound, Type: flow.NodeChoice, Rules: []flow.Rule{
-		{When: fmt.Sprintf("visits[%q] < %d", nodeRound, rounds), To: nodeRound},
-		{Default: true, To: nodeJudge},
+		{Name: RuleNextRound, When: fmt.Sprintf("visits[%q] < %d", nodeRound, rounds), To: nodeRound},
+		{Name: RuleMaxRounds, Default: true, To: nodeJudge},
 	}})
 	b.agent(nodeJudge, spec.Step{
 		Agent: p.Judge,

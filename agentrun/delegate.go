@@ -28,7 +28,7 @@ const delegateToolPrefix = "ask_"
 // own tools and delegates, but no memory) exposed with agent.AsTool. Calls
 // are not durable: if the step fails, they run again with it. A delegate's
 // system prompt renders over the delegating job's context, data.
-func delegateTools(delegates []Agent, data map[string]any, tracer *runTracer) ([]*llm.Tool, error) {
+func delegateTools(delegates []Agent, data map[string]any) ([]*llm.Tool, error) {
 	tools := make([]*llm.Tool, 0, len(delegates))
 
 	for _, d := range delegates {
@@ -42,13 +42,11 @@ func delegateTools(delegates []Agent, data map[string]any, tracer *runTracer) ([
 			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
 		}
 
-		ag.SetTracer(tracer)
-
 		if d.Spec.MaxIterations > 0 {
 			ag.SetMaxIterations(d.Spec.MaxIterations)
 		}
 
-		sub, err := delegateTools(d.Delegates, data, tracer)
+		sub, err := delegateTools(d.Delegates, data)
 		if err != nil {
 			return nil, err
 		}
@@ -74,23 +72,4 @@ func delegateTools(delegates []Agent, data map[string]any, tracer *runTracer) ([
 	}
 
 	return tools, nil
-}
-
-// addUsage adds b to a.
-func addUsage(a, b map[string]float64) map[string]float64 {
-	if len(b) == 0 {
-		return a
-	}
-
-	out := make(map[string]float64, len(a)+len(b))
-
-	for k, v := range a {
-		out[k] += v
-	}
-
-	for k, v := range b {
-		out[k] += v
-	}
-
-	return out
 }

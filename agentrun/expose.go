@@ -24,6 +24,7 @@ import (
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
 	natsagent "github.com/henomis/phero/v2/nats"
+	"github.com/henomis/phero/v2/trace"
 )
 
 // exposed serves an agent on the NATS Agent Protocol.
@@ -31,6 +32,7 @@ type exposed struct {
 	a        Agent
 	sessions *sessionCache
 	logger   *slog.Logger
+	tracing  *trace.Provider
 }
 
 // Exposed returns a protocol handler (for phero's nats.Server) that answers
@@ -38,14 +40,11 @@ type exposed struct {
 // its long-term memory when it has one (one session for all callers; a
 // per-execution memory has no execution here and uses that same session).
 // Execution memory, routes and human input belong to flow steps and do not
-// apply. Of the options, only WithLogger applies.
+// apply. Of the options, only WithLogger and WithTracing apply.
 func Exposed(a Agent, opts ...Option) natsagent.Handler {
-	r := &runner{}
-	for _, opt := range opts {
-		opt(r)
-	}
+	r := newRunner(a, opts)
 
-	e := &exposed{a: a, logger: r.logger}
+	e := &exposed{a: a, logger: r.logger, tracing: r.tracing}
 	if e.logger == nil {
 		e.logger = slog.Default()
 	}
@@ -64,29 +63,43 @@ const (
 )
 
 // Run implements natsagent.Handler. Every request logs a start and an end
-// line at info, on the agent's name; the end carries the outcome, the
-// duration and the usage, and a failed request ends at warn with err.
+// line at info, on the agent's name, the caller's step (when a stiggy remote
+// step sent it) and the request's trace; the end carries the outcome, the
+// duration, the stop reason and the usage, delegates included, and a failed
+// request ends at warn with err.
 func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
-	log := e.logger.With(keyAgent, e.a.Name)
+	ctx = trace.WithProvider(ctx, e.tracing)
+	ctx, span := trace.Start(ctx, spanRequest+" "+e.a.Name, &trace.Custom{Type: spanRequest})
+
+	log := e.logger.With(append([]any{keyAgent, e.a.Name}, callerAttrs(ctx)...)...)
+	log = log.With(trace.LogKeyTraceID, span.Context().TraceID.String())
+	ctx = withLogger(ctx, log)
+
 	log.InfoContext(ctx, "stiggy: request started")
 
 	began := time.Now()
-	tr, delegated := newRunTracer(ctx, e.logger), newRunTracer(ctx, e.logger)
-	res, err := e.run(ctx, tr, delegated, parts...)
+	res, err := e.run(ctx, parts...)
+	totals := span.Totals()
+	span.End(err)
 
 	outcome, level := outcomeCompleted, slog.LevelInfo
 	if err != nil {
 		outcome, level = outcomeFailed, slog.LevelWarn
 	}
 
-	attrs := []any{"outcome", outcome, "duration", time.Since(began)}
+	attrs := []any{"outcome", outcome, keyDuration, time.Since(began)}
 
-	if tr.summary() != nil {
-		usage := addUsage(usageOf(tr.summary()), delegated.usage())
-		for _, k := range []string{CounterTokensIn, CounterTokensOut, CounterCostUSD} {
-			if v, ok := usage[k]; ok {
-				attrs = append(attrs, k, v)
-			}
+	switch {
+	case res != nil && res.Summary != nil:
+		attrs = append(attrs, keyStop, res.Summary.StopReason)
+	case err != nil:
+		attrs = append(attrs, keyStop, stopReasonOf(err))
+	}
+
+	usage := usageOf(&totals)
+	for _, k := range []string{CounterTokensIn, CounterTokensOut, CounterCostUSD, CounterLLMCalls, CounterToolCalls} {
+		if v, ok := usage[k]; ok {
+			attrs = append(attrs, k, v)
 		}
 	}
 
@@ -99,9 +112,33 @@ func (e *exposed) Run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 	return res, err
 }
 
-// run answers one request with a fresh agent, traced by tr and its
-// delegates by delegated.
-func (e *exposed) run(ctx context.Context, tr, delegated *runTracer, parts ...llm.ContentPart) (*agent.Result, error) {
+// callerAttrs are the log attributes of the step that sent the request,
+// from the headers a stiggy remote step sends; none for other callers.
+func callerAttrs(ctx context.Context) []any {
+	req, ok := natsagent.RequestFrom(ctx)
+	if !ok || req.Header == nil {
+		return nil
+	}
+
+	var attrs []any
+
+	for _, h := range [...][2]string{
+		{HeaderExec, "caller_exec"},
+		{HeaderFlow, "caller_flow"},
+		{HeaderNode, "caller_node"},
+		{HeaderAttempt, "caller_attempt"},
+	} {
+		if v := req.Header.Get(h[0]); v != "" {
+			attrs = append(attrs, h[1], v)
+		}
+	}
+
+	return attrs
+}
+
+// run answers one request with a fresh agent; its spans, and its
+// delegates', are children of the request's.
+func (e *exposed) run(ctx context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
 	// An exposed agent has no job context: the compiler keeps its system
 	// prompt and its delegates' static.
 	system, err := SystemPrompt(e.a.Name, e.a.Spec, nil)
@@ -114,9 +151,7 @@ func (e *exposed) run(ctx context.Context, tr, delegated *runTracer, parts ...ll
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	ag.SetTracer(tr)
-
-	delegates, err := delegateTools(e.a.Delegates, nil, delegated)
+	delegates, err := delegateTools(e.a.Delegates, nil)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}

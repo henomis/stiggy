@@ -33,8 +33,9 @@ const (
 	askHumanTool    = "ask_human"
 )
 
-// errAskedHuman stops the agent run once it has asked a human: the step is
-// interrupted until the answer arrives.
+// errAskedHuman is the cause of the stop (agent.StopRun) that ends the agent
+// run once it has asked a human: the step is interrupted until the answer
+// arrives.
 var errAskedHuman = errors.New("agentrun: waiting for a human")
 
 // control holds what an agent decides about the workflow during one run:
@@ -45,11 +46,10 @@ var errAskedHuman = errors.New("agentrun: waiting for a human")
 // context, while a route here is recorded and the agent
 // still gives its answer.
 type control struct {
-	cancel context.CancelCauseFunc
-
-	mu    sync.Mutex
-	next  string
-	asked string
+	mu     sync.Mutex
+	next   string
+	reason string
+	asked  string
 }
 
 type routeInput struct {
@@ -68,9 +68,9 @@ func (c *control) tools(s spec.Step) ([]*llm.Tool, error) {
 		t, err := llm.NewTool(routeToolPrefix+agent.SanitizeToolName(target),
 			fmt.Sprintf("Continue the workflow with step %q after your answer, instead of the default next step. "+
 				"Call it at most once, then write a short handoff note for that step.", target),
-			func(_ context.Context, _ *routeInput) (string, error) {
+			func(_ context.Context, in *routeInput) (string, error) {
 				c.mu.Lock()
-				c.next = target
+				c.next, c.reason = target, strings.TrimSpace(in.Reason)
 				c.mu.Unlock()
 
 				return handoffNote(target), nil
@@ -95,9 +95,10 @@ func (c *control) tools(s spec.Step) ([]*llm.Tool, error) {
 				c.mu.Lock()
 				c.asked = q
 				c.mu.Unlock()
-				c.cancel(errAskedHuman)
 
-				return "Your question was sent to a human.", nil
+				// A requested stop, not a failure: the run ends after this
+				// round, its span clean.
+				return "", agent.StopRun(errAskedHuman)
 			})
 		if err != nil {
 			return nil, err
@@ -137,11 +138,13 @@ func (c *control) instructions(s spec.Step) string {
 	return b.String()
 }
 
-func (c *control) route() string {
+// route returns the step the agent routed to and the reason it gave; ""
+// when it kept the default next step.
+func (c *control) route() (string, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.next
+	return c.next, c.reason
 }
 
 func (c *control) question() string {

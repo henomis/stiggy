@@ -59,7 +59,8 @@ executions (same connection flags, and -ns NAMESPACE):
   history <exec>                 the event log, as JSON lines
   progress <exec>                streamed agent progress, as JSON lines
   signal <exec> <name> [-payload JSON]
-  resume <exec> <node> [-value JSON]   answer an agent waiting for a human
+  resume <exec> <node> [-value JSON] [-by WHO]
+      answer an agent waiting for a human; -by records who answered
   update <exec> -writes JSON     write channels (edit state while paused)
   cancel <exec> [-reason TEXT]
   fork <exec> <seq>              branch an execution from a point in history

@@ -135,6 +135,7 @@ func Compile(f *spec.Fleet, cat Catalog) (*Plan, error) {
 	c.remotes()
 	c.agents()
 	c.expose()
+	c.tracing()
 	flows := c.flows()
 	scheds := c.schedules()
 

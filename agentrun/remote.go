@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/nats-io/nats.go"
@@ -25,6 +26,7 @@ import (
 	"github.com/henomis/packtrail/worker"
 	natsagent "github.com/henomis/phero/v2/nats"
 
+	"github.com/henomis/stiggy/internal/report"
 	"github.com/henomis/stiggy/internal/stepio"
 	"github.com/henomis/stiggy/spec"
 )
@@ -141,13 +143,47 @@ func (rm Remote) prompt(ctx context.Context, job *worker.Job, prompt string) (st
 		}
 	}
 
+	reportRemote(ctx, err)
+
+	err = fmt.Errorf("agentrun: remote %s%s: %w", rm.Name, remoteCode(err), err)
 	if natsagent.Permanent(err) {
-		return "", worker.Permanent(fmt.Errorf("agentrun: remote %s: %w", rm.Name, err))
+		return "", worker.Permanent(err)
 	}
 
 	rm.Resolver.Invalidate(rm.Spec.Owner, rm.Spec.Name)
 
-	return "", fmt.Errorf("agentrun: remote %s: %w", rm.Name, err)
+	return "", err
+}
+
+// remoteCode is " (<code>)" for a remote agent's error with a machine-readable
+// code, which the protocol error's text leaves out; "" otherwise.
+func remoteCode(err error) string {
+	var se *natsagent.ServiceError
+	if errors.As(err, &se) && se.ErrCode != "" {
+		return " (" + se.ErrCode + ")"
+	}
+
+	return ""
+}
+
+// reportRemote reports the code of a remote agent's error and the wait it
+// asked for. The node's retry policy still decides the next attempt.
+func reportRemote(ctx context.Context, err error) {
+	var se *natsagent.ServiceError
+	if !errors.As(err, &se) {
+		return
+	}
+
+	rep := report.From(ctx)
+	rep.Add(slog.Int("status_code", se.Code))
+
+	if se.ErrCode != "" {
+		rep.Add(slog.String("error_code", se.ErrCode))
+	}
+
+	if se.RetryAfter > 0 {
+		rep.Add(slog.Duration("retry_after", se.RetryAfter))
+	}
 }
 
 func headers(job *worker.Job) nats.Header {

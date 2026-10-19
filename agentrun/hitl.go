@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/llm"
@@ -70,14 +71,29 @@ type pending struct {
 	Text   string `json:"text"`
 	Output any    `json:"output,omitempty"`
 	Route  string `json:"route,omitempty"`
+	// RouteReason is why the agent chose Route.
+	RouteReason string `json:"route_reason,omitempty"`
+	// AskedAt is when the step paused for the human.
+	AskedAt time.Time `json:"asked_at,omitzero"`
 	// Memory is the execution-memory turn of the reviewed run, written when
 	// the human approves.
 	Memory []llm.Message `json:"memory,omitempty"`
 }
 
+// Review outcomes, as reported.
+const (
+	reviewAnswered = "answered"
+	reviewApproved = "approved"
+	reviewFeedback = "feedback"
+)
+
 type hitl struct {
 	rec      record
 	approved *pending
+	// replied is what the human was asked when this run resumes from a
+	// pause, nil otherwise; outcome is how they replied.
+	replied *pending
+	outcome string
 }
 
 // openHITL reads the step's record from the interrupt payload of a resumed
@@ -105,11 +121,17 @@ func openHITL(job *worker.Job) (*hitl, error) {
 	}
 
 	reply := parseReply(job.Context.Resume)
+	h.replied = p
 
-	if p.Kind == kindReview && reply.approves() {
-		h.approved = p
+	switch {
+	case p.Kind == kindQuestion:
+		h.outcome = reviewAnswered
+	case reply.approves():
+		h.outcome, h.approved = reviewApproved, p
 
 		return h, nil
+	default:
+		h.outcome = reviewFeedback
 	}
 
 	h.rec.Turns = append(h.rec.Turns, turn{Kind: p.Kind, Text: p.Text, Reply: reply.text()})
@@ -121,6 +143,7 @@ func openHITL(job *worker.Job) (*hitl, error) {
 // interrupt pauses the step on p; the payload carries the whole record.
 func (h *hitl) interrupt(p *pending, agentName, node string) error {
 	rec := h.rec
+	p.AskedAt = time.Now().UTC()
 	rec.Pending = p
 
 	in := Interrupt{Kind: p.Kind, Agent: agentName, Node: node, Stiggy: rec}
