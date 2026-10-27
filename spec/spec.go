@@ -101,6 +101,13 @@ type Model struct {
 	// RateLimit caps the calls to this model. It applies
 	// per process: each worker process has its own budget.
 	RateLimit *RateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	// StrictTools set to false sends tool schemas without strict mode, for
+	// compatible servers that mishandle it; nil keeps strict mode (openai,
+	// ollama and anthropic only).
+	StrictTools *bool `yaml:"strict_tools,omitempty" json:"strict_tools,omitempty"`
+	// PromptCacheTTL turns on prompt caching with entries kept for 5m or 1h
+	// (anthropic only).
+	PromptCacheTTL string `yaml:"prompt_cache_ttl,omitempty" json:"prompt_cache_ttl,omitempty"`
 }
 
 // RateLimit bounds the calls to a model: their rate, their concurrency, or
@@ -146,6 +153,9 @@ type Agent struct {
 	// MaxIterations bounds the agent loop of one step; 0 means phero's
 	// default (agent.DefaultMaxIterations, 25).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"`
+	// MaxParallelTools bounds the tool calls of one model answer that run at
+	// once; 0 runs them all at once.
+	MaxParallelTools int `yaml:"max_parallel_tools,omitempty" json:"max_parallel_tools,omitempty"`
 	// Compaction keeps the conversation within the model's context window
 	// by summarizing its older messages; nil disables it.
 	Compaction *Compaction `yaml:"compaction,omitempty" json:"compaction,omitempty"`

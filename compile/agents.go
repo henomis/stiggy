@@ -53,6 +53,10 @@ func (c *compiler) agents() {
 			c.errorf(path+".max_iterations", "must not be negative")
 		}
 
+		if a.MaxParallelTools < 0 {
+			c.errorf(path+".max_parallel_tools", "must not be negative")
+		}
+
 		c.compaction(path+".compaction", a.Compaction)
 		c.memory(path+".memory", a.Memory)
 		c.session(path+".memory.session", name, a.Memory)

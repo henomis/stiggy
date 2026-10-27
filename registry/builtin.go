@@ -53,7 +53,11 @@ func builtinProviders() map[string]ModelFactory {
 }
 
 func newOpenAI(m spec.Model) (llm.LLM, error) {
-	opts := openAIOptions(m)
+	opts, err := openAIOptions(m)
+	if err != nil {
+		return nil, err
+	}
+
 	if m.MaxTokens > 0 {
 		opts = append(opts, openai.WithMaxTokens(int64(m.MaxTokens)))
 	}
@@ -77,7 +81,11 @@ func newOllama(m spec.Model) (llm.LLM, error) {
 		m.APIKey = ollamaAPIKey
 	}
 
-	opts := openAIOptions(m)
+	opts, err := openAIOptions(m)
+	if err != nil {
+		return nil, err
+	}
+
 	if m.MaxTokens > 0 {
 		opts = append(opts, openai.WithLegacyMaxTokens(int64(m.MaxTokens)))
 	}
@@ -85,7 +93,11 @@ func newOllama(m spec.Model) (llm.LLM, error) {
 	return openai.New(m.APIKey, opts...), nil
 }
 
-func openAIOptions(m spec.Model) []openai.Option {
+func openAIOptions(m spec.Model) ([]openai.Option, error) {
+	if m.PromptCacheTTL != "" {
+		return nil, fmt.Errorf("%w: %s models take no prompt_cache_ttl", ErrOptions, m.Provider)
+	}
+
 	opts := []openai.Option{openai.WithBaseURL(m.BaseURL)}
 	if m.Model != "" {
 		opts = append(opts, openai.WithModel(m.Model))
@@ -95,7 +107,11 @@ func openAIOptions(m spec.Model) []openai.Option {
 		opts = append(opts, openai.WithTemperature(float32(*m.Temperature)))
 	}
 
-	return opts
+	if m.StrictTools != nil {
+		opts = append(opts, openai.WithStrictTools(*m.StrictTools))
+	}
+
+	return opts, nil
 }
 
 func newAnthropic(m spec.Model) (llm.LLM, error) {
@@ -112,6 +128,14 @@ func newAnthropic(m spec.Model) (llm.LLM, error) {
 		opts = append(opts, anthropic.WithTemperature(float32(*m.Temperature)))
 	}
 
+	if m.StrictTools != nil {
+		opts = append(opts, anthropic.WithStrictTools(*m.StrictTools))
+	}
+
+	if m.PromptCacheTTL != "" {
+		opts = append(opts, anthropic.WithPromptCacheTTL(anthropic.CacheTTL(m.PromptCacheTTL)))
+	}
+
 	return anthropic.New(m.APIKey, opts...), nil
 }
 
@@ -120,6 +144,10 @@ func newAnthropic(m spec.Model) (llm.LLM, error) {
 // endpoint loses them, so tools fail there). An empty api_key falls back to
 // GOOGLE_API_KEY or GEMINI_API_KEY.
 func newGoogle(m spec.Model) (llm.LLM, error) {
+	if m.StrictTools != nil || m.PromptCacheTTL != "" {
+		return nil, fmt.Errorf("%w: google models take no strict_tools or prompt_cache_ttl", ErrOptions)
+	}
+
 	opts := []google.Option{google.WithBaseURL(m.BaseURL), google.WithModel(m.Model)}
 
 	if m.MaxTokens > 0 {

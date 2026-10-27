@@ -69,6 +69,10 @@ func (a Agent) limit(ag *agent.Agent) {
 		ag.SetMaxIterations(a.Spec.MaxIterations)
 	}
 
+	if a.Spec.MaxParallelTools > 0 {
+		ag.SetMaxParallelTools(a.Spec.MaxParallelTools)
+	}
+
 	if a.Compactor != nil && a.Spec.Compaction != nil {
 		ag.SetCompaction(a.Compactor, a.Spec.Compaction.AtTokens)
 	}

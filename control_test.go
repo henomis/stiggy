@@ -21,8 +21,10 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/henomis/packtrail"
 	"github.com/henomis/packtrail/flow"
@@ -370,6 +372,61 @@ flows:
 	st := h.Run(t, "loop", map[string]any{})
 	if st.Status != packtrail.StatusFailed || !strings.Contains(st.Reason, "budget") {
 		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
+	}
+}
+
+// TestMaxParallelTools checks max_parallel_tools bounds the tool calls of one
+// model answer that run at once.
+func TestMaxParallelTools(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		running, most int
+	)
+
+	slow, err := llm.NewTool("slow", "Takes a while.", func(context.Context, *struct{}) (string, error) {
+		mu.Lock()
+		running++
+		most = max(most, running)
+		mu.Unlock()
+
+		time.Sleep(20 * time.Millisecond)
+
+		mu.Lock()
+		running--
+		mu.Unlock()
+
+		return "done", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "slow"}, {Tool: "slow"}, {Tool: "slow"}}}
+		}
+
+		return stiggytest.Response{Text: "all done"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {worker: {model: m, tools: [slow], max_parallel_tools: 1}}
+flows:
+  work:
+    nodes:
+      - {id: work, type: task, agent: worker}
+`, map[string]llm.LLM{"m": model}, stiggy.WithTool("slow", slow))
+
+	if st := h.Run(t, "work", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if most != 1 {
+		t.Fatalf("at most %d tool calls ran at once, want 1", most)
 	}
 }
 

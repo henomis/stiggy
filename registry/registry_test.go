@@ -74,15 +74,28 @@ func TestToolOptionsAreStrict(t *testing.T) {
 func TestModels(t *testing.T) {
 	r := registry.New()
 	temp := 0.2
+	lax := false
 
 	for _, m := range []spec.Model{
-		{Provider: "openai", Model: "gpt-4o-mini", APIKey: "k", Temperature: &temp},
-		{Provider: "anthropic", MaxTokens: 1000},
+		{Provider: "openai", Model: "gpt-4o-mini", APIKey: "k", Temperature: &temp, StrictTools: &lax},
+		{Provider: "anthropic", MaxTokens: 1000, StrictTools: &lax, PromptCacheTTL: "1h"},
 		{Provider: "google", Model: "gemini-3.5-flash", APIKey: "k", MaxTokens: 1000, Temperature: &temp},
-		{Provider: "ollama", Model: "llama3"},
+		{Provider: "ollama", Model: "llama3", StrictTools: &lax},
 	} {
 		if _, err := r.BuildModel("m", m); err != nil {
 			t.Errorf("%s: %v", m.Provider, err)
+		}
+	}
+
+	// Each provider rejects the settings it cannot honour.
+	for _, m := range []spec.Model{
+		{Provider: "openai", PromptCacheTTL: "5m"},
+		{Provider: "ollama", Model: "x", PromptCacheTTL: "5m"},
+		{Provider: "google", StrictTools: &lax},
+		{Provider: "google", PromptCacheTTL: "5m"},
+	} {
+		if _, err := r.BuildModel("m", m); !errors.Is(err, registry.ErrOptions) {
+			t.Errorf("%s %+v: err = %v", m.Provider, m, err)
 		}
 	}
 
