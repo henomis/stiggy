@@ -16,6 +16,7 @@ package agentrun
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
@@ -49,7 +50,12 @@ func delegateTools(delegates []Agent, data map[string]any) ([]*llm.Tool, error) 
 			return nil, err
 		}
 
-		for _, t := range append(append([]*llm.Tool{}, d.Tools...), sub...) {
+		own, err := d.runTools(nil)
+		if err != nil {
+			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
+		}
+
+		for _, t := range slices.Concat(d.Tools, sub, own) {
 			if err = ag.AddTool(t); err != nil {
 				return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
 			}

@@ -32,6 +32,7 @@ import (
 	"github.com/henomis/phero/v2/llm"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/config"
 	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
@@ -427,6 +428,63 @@ flows:
 
 	if most != 1 {
 		t.Fatalf("at most %d tool calls ran at once, want 1", most)
+	}
+}
+
+// TestTodo checks an agent with todo keeps a task list, published as
+// progress when it streams.
+func TestTodo(t *testing.T) {
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "todo_write", Args: map[string]any{
+				"todos": []any{
+					map[string]any{"content": "Read the brief", "status": "completed"},
+					map[string]any{"content": "Write the draft", "status": "in_progress"},
+				},
+			}}}}
+		}
+
+		return stiggytest.Response{Text: "list: " + r.ToolResults[0]}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {planner: {model: m, todo: true, stream: true}}
+flows:
+  plan:
+    nodes:
+      - {id: plan, type: task, agent: planner}
+`, map[string]llm.LLM{"m": model})
+
+	ctx := ctxTimeout(t)
+
+	// Progress is not stored: subscribe before starting, with a known id.
+	events, err := h.Client.Progress(ctx, "plan-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = h.Client.Start(ctx, "plan", map[string]any{"x": 1}, packtrail.WithExecutionID("plan-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	var lists []agentrun.Progress
+
+	for ev := range events {
+		var p agentrun.Progress
+		if json.Unmarshal(ev.Data, &p) == nil && p.Type == agentrun.ProgressTodo {
+			lists = append(lists, p)
+		}
+	}
+
+	st, err := h.Client.Wait(ctx, "plan-1")
+	if err != nil || st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %v: %v", st, err)
+	}
+
+	if len(lists) != 1 || len(lists[0].Todos) != 2 || lists[0].Todos[1].Content != "Write the draft" ||
+		lists[0].Agent != "planner" {
+		t.Fatalf("todo progress = %+v, want the two-item list", lists)
 	}
 }
 

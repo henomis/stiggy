@@ -306,6 +306,12 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	out := agentrun.Agent{Name: name, Spec: as, LLM: l}
 	names := toolNames{agent: name, owners: map[string]string{}}
 
+	if as.Todo {
+		if err = names.claim("todo", agentrun.TodoToolName); err != nil {
+			return agentrun.Agent{}, err
+		}
+	}
+
 	if as.Compaction != nil {
 		if out.Compactor, err = s.compactor(*as.Compaction, l); err != nil {
 			return agentrun.Agent{}, err

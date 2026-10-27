@@ -542,6 +542,12 @@ func TestToolNameClash(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	todoWrite, err := llm.NewTool("todo_write", "Clashes with the todo list.",
+		func(context.Context, *struct{}) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for name, tc := range map[string]struct {
 		doc  string
 		opts []stiggy.Option
@@ -559,6 +565,10 @@ agents:
   helper: {model: m}
 `, opts: []stiggy.Option{stiggy.WithTool("custom", askHelper)},
 			want: `agent "a": tool "custom" and delegate "helper" both provide "ask_helper"`},
+		"a tool and the todo list": {doc: `
+agents: {a: {model: m, todo: true, tools: [custom]}}
+`, opts: []stiggy.Option{stiggy.WithTool("custom", todoWrite)},
+			want: `agent "a": todo and tool "custom" both provide "todo_write"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fleet, src, perr := config.Parse([]byte(tc.doc + `

@@ -156,7 +156,12 @@ func (e *exposed) run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 	}
 
-	for _, t := range slices.Concat(e.a.Tools, delegates) {
+	own, err := e.a.runTools(nil)
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
+	}
+
+	for _, t := range slices.Concat(e.a.Tools, delegates, own) {
 		if err = ag.AddTool(t); err != nil {
 			return nil, fmt.Errorf("agent %q: %w", e.a.Name, err)
 		}

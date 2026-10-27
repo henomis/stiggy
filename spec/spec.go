@@ -153,6 +153,10 @@ type Agent struct {
 	// MaxIterations bounds the agent loop of one step; 0 means phero's
 	// default (agent.DefaultMaxIterations, 25).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"`
+	// Todo gives the agent a todo_write tool to keep a task list while it
+	// works on a long step. The list lasts one run: a step, a delegate's
+	// step, or a prompt to an exposed agent.
+	Todo bool `yaml:"todo,omitempty" json:"todo,omitempty"`
 	// MaxParallelTools bounds the tool calls of one model answer that run at
 	// once; 0 runs them all at once.
 	MaxParallelTools int `yaml:"max_parallel_tools,omitempty" json:"max_parallel_tools,omitempty"`

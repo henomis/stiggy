@@ -208,6 +208,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
     <span class="c-key">delegates</span>: [researcher, legal]      <span class="c-com"># agents or remotes, as ask_&lt;name&gt; tools</span>
     <span class="c-key">max_iterations</span>: <span class="c-num">10</span>                  <span class="c-com"># default 25</span>
     <span class="c-key">max_parallel_tools</span>: <span class="c-num">2</span>               <span class="c-com"># default: all of one answer at once</span>
+    <span class="c-key">todo</span>: <span class="c-num">true</span>                          <span class="c-com"># a todo_write task list</span>
     <span class="c-key">compaction</span>: {<span class="c-key">at_tokens</span>: <span class="c-num">100000</span>}     <span class="c-com"># see below</span>
     <span class="c-key">stream</span>: <span class="c-num">true</span>                        <span class="c-com"># progress events while it runs</span>
     <span class="c-key">memory</span>: execution                   <span class="c-com"># see below</span></code></pre>
@@ -215,7 +216,8 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <ul>
 <li><strong>Steering tools</strong> are added from the step: <code>route_to_&lt;node&gt;</code> for each route and <code>ask_human</code> (see <a href="#routing">Routing &amp; human in the loop</a>).</li>
 <li><strong>Delegates</strong> appear as <code>ask_&lt;name&gt;</code> tools; their usage is charged to the calling step.</li>
-<li><strong>Streaming</strong> (<code>stream: true</code>) publishes text, tool calls and compactions as progress, readable with <code>stiggy progress</code>.</li>
+<li><strong>Streaming</strong> (<code>stream: true</code>) publishes text, tool calls, compactions and task lists as progress, readable with <code>stiggy progress</code>.</li>
+<li><strong>Task list</strong> (<code>todo: true</code>) gives the agent a <code>todo_write</code> tool to write down the steps of a long task and tick them off. The list lasts one run: a step, a delegate's step, or a prompt to an exposed agent.</li>
 </ul>
 <p><code>system</code>, <code>role</code>, <code>goal</code> and <code>backstory</code> are templates over the job context, like a step <a href="#prompts">prompt</a>: <code>role: "{{.item.name}}"</code> gives each item of a map its own persona, and delegates render over the job of the step that delegates. Exposed agents and their delegates answer outside any job, so a template in theirs is rejected.</p>
 <h3 id="memory">memory</h3>

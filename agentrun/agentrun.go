@@ -199,7 +199,7 @@ func (r *runner) attempt(ctx context.Context, job *worker.Job, step spec.Step, s
 		return nil, err
 	}
 
-	ag, err := r.build(job.Node, step, schema, data, ctl)
+	ag, err := r.build(job, step, schema, data, ctl)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -307,7 +307,7 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control,
+func (r *runner) build(job *worker.Job, step spec.Step, schema, data map[string]any, ctl *control,
 ) (*agent.Agent, error) {
 	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
 	if err != nil {
@@ -329,7 +329,12 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	all := slices.Concat(r.a.Tools, delegates, steering)
+	own, err := r.a.runTools(r.a.todoProgress(job))
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
+	}
+
+	all := slices.Concat(r.a.Tools, delegates, steering, own)
 
 	for _, t := range all {
 		if err = ag.AddTool(t); err != nil {
@@ -340,7 +345,7 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 	r.a.limit(ag)
 
 	if schema != nil {
-		f, ferr := responseFormat(node, schema)
+		f, ferr := responseFormat(job.Node, schema)
 		if ferr != nil {
 			return nil, ferr
 		}

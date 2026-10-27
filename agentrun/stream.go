@@ -23,6 +23,7 @@ import (
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/tool/todo"
 )
 
 // Text deltas are coalesced into one progress event per interval or size,
@@ -38,6 +39,7 @@ const (
 	ProgressToolCall   = "tool_call"
 	ProgressToolResult = "tool_result"
 	ProgressCompaction = "compaction"
+	ProgressTodo       = "todo"
 )
 
 // errNoResult is returned when a stream ends without its final event.
@@ -61,6 +63,8 @@ type Progress struct {
 	Trigger      string `json:"trigger,omitempty"`
 	TokensBefore int    `json:"tokens_before,omitempty"`
 	TokensAfter  int    `json:"tokens_after,omitempty"`
+	// Todos is the agent's task list, after each update.
+	Todos []todo.Item `json:"todos,omitempty"`
 }
 
 // compacted returns the progress event of a finished compaction.
