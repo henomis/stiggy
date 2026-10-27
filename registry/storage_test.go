@@ -45,7 +45,7 @@ func TestBuiltinMemories(t *testing.T) {
 
 	for _, m := range []spec.Memory{
 		{Type: "simple", Options: map[string]any{"max_items": 10}},
-		{Type: "nats", Options: map[string]any{"bucket": "stiggy-test-mem"}},
+		{Type: "nats", Options: map[string]any{"bucket": "stiggy-test-mem", "prune_compacted": false}},
 	} {
 		if err := r.ValidateMemory(m); err != nil {
 			t.Errorf("%s: validate: %v", m.Type, err)

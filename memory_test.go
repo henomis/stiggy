@@ -35,6 +35,7 @@ import (
 	"github.com/henomis/phero/v2/vectorstore"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/registry"
 	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
@@ -189,8 +190,8 @@ flows:
 }
 
 // TestCompaction checks an agent's conversation is compacted: the summary
-// model replaces the older messages, and the agent's model sees the summary
-// instead of them.
+// model replaces the older messages, the agent's model sees the summary
+// instead of them, and a streaming agent reports the compaction as progress.
 func TestCompaction(t *testing.T) {
 	var summaries atomic.Int32
 
@@ -219,6 +220,7 @@ models: {m: {provider: x}, s: {provider: x}}
 agents:
   clerk:
     model: m
+    stream: true
     compaction: {model: s, at_tokens: 1, keep_recent: 1}
     memory: {type: simple}
 flows:
@@ -227,14 +229,44 @@ flows:
       - {id: note, type: task, agent: clerk}
 `, map[string]llm.LLM{"m": clerk, "s": summarizer})
 
-	for range 2 {
-		if st := h.Run(t, "note", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
-			t.Fatalf("status %s: %s", st.Status, st.Error)
+	if st := h.Run(t, "note", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	ctx := ctxTimeout(t)
+
+	// Progress is not stored: subscribe before starting, with a known id.
+	events, err := h.Client.Progress(ctx, "note-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = h.Client.Start(ctx, "note", map[string]any{"x": 1}, packtrail.WithExecutionID("note-2")); err != nil {
+		t.Fatal(err)
+	}
+
+	var compactions []agentrun.Progress
+
+	for ev := range events {
+		var p agentrun.Progress
+		if json.Unmarshal(ev.Data, &p) == nil && p.Type == agentrun.ProgressCompaction {
+			compactions = append(compactions, p)
 		}
+	}
+
+	if st, werr := h.Client.Wait(ctx, "note-2"); werr != nil || st.Status != packtrail.StatusCompleted {
+		t.Fatalf("second execution: %v, %v", st, werr)
 	}
 
 	if summaries.Load() == 0 {
 		t.Fatal("the summary model was never called")
+	}
+
+	// The messages here are so short that the summary is no smaller than
+	// what it replaces: only the sizes' presence is checked.
+	if len(compactions) != 1 || compactions[0].Trigger != "threshold" || compactions[0].IsError ||
+		compactions[0].TokensBefore == 0 || compactions[0].TokensAfter == 0 {
+		t.Fatalf("compaction progress = %+v, want one threshold compaction", compactions)
 	}
 
 	mu.Lock()

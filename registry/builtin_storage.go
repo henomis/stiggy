@@ -57,12 +57,17 @@ type simpleMemoryOptions struct {
 
 type natsMemoryOptions struct {
 	Bucket string `json:"bucket"`
+	// PruneCompacted sets whether storing a compaction's summary drops the
+	// messages it stands for; unset keeps phero's default (on for nats, off
+	// for psql).
+	PruneCompacted *bool `json:"prune_compacted"`
 }
 
 type psqlMemoryOptions struct {
-	DSN          string `json:"dsn"`
-	Table        string `json:"table"`
-	EnsureSchema *bool  `json:"ensure_schema"`
+	DSN            string `json:"dsn"`
+	Table          string `json:"table"`
+	EnsureSchema   *bool  `json:"ensure_schema"`
+	PruneCompacted *bool  `json:"prune_compacted"`
 }
 
 type ragMemoryOptions struct{}
@@ -94,7 +99,13 @@ func newNATSMemory(_ context.Context, o natsMemoryOptions, _ spec.Memory, env Me
 		return nil, fmt.Errorf("%w: nats memory needs a NATS connection", ErrOptions)
 	}
 
-	return natsmemory.Open(env.Conn, o.Bucket, env.Session)
+	var opts []natsmemory.Option
+
+	if o.PruneCompacted != nil {
+		opts = append(opts, natsmemory.WithPruneCompacted(*o.PruneCompacted))
+	}
+
+	return natsmemory.Open(env.Conn, o.Bucket, env.Session, opts...)
 }
 
 func newPsqlMemory(_ context.Context, o psqlMemoryOptions, _ spec.Memory, env MemoryEnv) (memory.Memory, error) {
@@ -111,6 +122,10 @@ func newPsqlMemory(_ context.Context, o psqlMemoryOptions, _ spec.Memory, env Me
 
 	if o.EnsureSchema != nil {
 		opts = append(opts, psqlmemory.WithEnsureSchema(*o.EnsureSchema))
+	}
+
+	if o.PruneCompacted != nil {
+		opts = append(opts, psqlmemory.WithPruneCompacted(*o.PruneCompacted))
 	}
 
 	return psqlmemory.New(db, env.Session, opts...)
