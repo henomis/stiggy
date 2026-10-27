@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -209,23 +208,16 @@ func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM
 }
 
 // transient reports whether a failed model call may succeed when retried. A
-// provider's 4xx answer is permanent (a bad request or key fails again the
-// same way), except a timeout (408) and a rate limit (429); anything else,
-// a 5xx or a network error, is worth another try.
+// provider's answer is judged by phero (a timeout, a conflict, a rate limit
+// or a 5xx is worth another try; a bad request, a bad key or a prompt too
+// long for the context window is not); any other error, a network failure
+// included, is retried, unless it is a guardrail block.
 func transient(err error) bool {
-	var pe *llm.ProviderError
-	if !errors.As(err, &pe) {
-		return true
+	if _, ok := errors.AsType[*llm.ProviderError](err); ok {
+		return llm.IsRetryable(err)
 	}
 
-	switch {
-	case pe.StatusCode == http.StatusRequestTimeout, pe.StatusCode == http.StatusTooManyRequests:
-		return true
-	case pe.StatusCode >= http.StatusBadRequest && pe.StatusCode < http.StatusInternalServerError:
-		return false
-	default:
-		return true
-	}
+	return !errors.Is(err, llm.ErrGuardrailBlocked)
 }
 
 func (s *assembly) tool(ctx context.Context, name string) ([]*llm.Tool, error) {

@@ -394,6 +394,12 @@ func classify(err error, maxIterations int) error {
 		return worker.Permanent(fmt.Errorf("%s: reached %d: %w", trace.StopMaxIterations, maxIterations, err))
 	}
 
+	// The same prompt overflows the context window again, whatever status
+	// the provider answered it with.
+	if errors.Is(err, llm.ErrContextLengthExceeded) {
+		return worker.Permanent(err)
+	}
+
 	var pe *llm.ProviderError
 	if errors.As(err, &pe) && pe.StatusCode >= http.StatusBadRequest && pe.StatusCode < http.StatusInternalServerError {
 		switch pe.StatusCode {
