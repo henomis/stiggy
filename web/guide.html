@@ -204,6 +204,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
     <span class="c-key">backstory</span>: Ten years at a daily paper.
     <span class="c-key">description</span>: Writes articles.       <span class="c-com"># for agents that delegate to it</span>
     <span class="c-key">tools</span>: [shell, files]
+    <span class="c-key">permissions</span>: {<span class="c-key">deny</span>: [<span class="c-str">"bash(rm *)"</span>]}    <span class="c-com"># see below</span>
     <span class="c-key">knowledge</span>: [handbook]               <span class="c-com"># one search_&lt;name&gt; tool each</span>
     <span class="c-key">delegates</span>: [researcher, legal]      <span class="c-com"># agents or remotes, as ask_&lt;name&gt; tools</span>
     <span class="c-key">max_iterations</span>: <span class="c-num">10</span>                  <span class="c-com"># default 25</span>
@@ -220,6 +221,16 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <li><strong>Task list</strong> (<code>todo: true</code>) gives the agent a <code>todo_write</code> tool to write down the steps of a long task and tick them off. The list lasts one run: a step, a delegate's step, or a prompt to an exposed agent.</li>
 </ul>
 <p><code>system</code>, <code>role</code>, <code>goal</code> and <code>backstory</code> are templates over the job context, like a step <a href="#prompts">prompt</a>: <code>role: "{{.item.name}}"</code> gives each item of a map its own persona, and delegates render over the job of the step that delegates. Exposed agents and their delegates answer outside any job, so a template in theirs is rejected.</p>
+<h3 id="permissions">permissions</h3>
+<p><code>permissions</code> decide which calls of the agent's <code>tools</code> may run, with rules written as a tool name, optionally followed by a pattern on what the call touches: <code>bash(go test *)</code> (the command), <code>read(/repo/**)</code> or <code>edit(src/*)</code> (the file), <code>web_fetch(https://go.dev/*)</code> (the URL), <code>mcp_github_*</code> (a tool name pattern).</p>
+<ul>
+<li>A call is denied when a <code>deny</code> rule matches, else allowed when an <code>allow</code> rule matches, else given <code>default</code>: <code>allow</code> (the default) or <code>deny</code>. For an allowlist, set <code>default: deny</code>;</li>
+<li>a denied call is reported to the model as a failed tool call, and the agent may go on another way;</li>
+<li>a bash line is split into its commands, each of which must pass on its own, so <code>go test ./... &amp;&amp; rm -rf /</code> does not pass <code>bash(go test *)</code>. A line the rules cannot judge (a command substitution, a redirection to a file) is denied unless an <code>allow</code> rule names it whole;</li>
+<li><code>working_dir</code> is what relative paths resolve against: set it to the file tools' <code>working_dir</code>;</li>
+<li>rules apply to the agent's <code>tools</code> only: knowledge, delegates, routes and its task list are not checked. Another agent naming the same tool is not affected.</li>
+</ul>
+<p>Bash rules match command text, so they stop mistakes, not an adversary: <code>bash(rm -rf *)</code> misses <code>/bin/rm -rf</code> or a script that runs <code>rm</code>. Use a bash <code>sandbox</code> where a restriction must hold.</p>
 <h3 id="memory">memory</h3>
 <div class="tablewrap"><table><thead><tr><th>Type</th><th>Kept in</th><th>Notes</th></tr></thead><tbody><tr><td><code>none</code> (default)</td><td>nowhere</td><td>Every step starts fresh</td></tr><tr><td><code>execution</code></td><td>the execution's state (hidden channel <code>_mem_&lt;agent&gt;</code>)</td><td>Correct under fork, rerun and time travel</td></tr><tr><td><code>simple</code></td><td>the worker process</td><td><code>max_items</code> (default 100)</td></tr><tr><td><code>nats</code></td><td>NATS KV</td><td><code>bucket</code>, <code>prune_compacted</code> (default true)</td></tr><tr><td><code>psql</code></td><td>PostgreSQL</td><td><code>dsn</code>, <code>table</code>, <code>ensure_schema</code>, <code>prune_compacted</code> (default false)</td></tr><tr><td><code>rag</code></td><td>a knowledge index</td><td><code>knowledge</code></td></tr></tbody></table></div>
 <p>Long-term types (all but <code>none</code> and <code>execution</code>) take <code>session</code> and <code>per_execution</code>, except <code>rag</code>: a <code>rag</code> memory is one collection shared by every job, so either is rejected on it.</p>

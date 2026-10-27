@@ -15,10 +15,12 @@
 package compile
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	natsagent "github.com/henomis/phero/v2/nats"
+	"github.com/henomis/phero/v2/tool/permission"
 
 	"github.com/henomis/stiggy/spec"
 )
@@ -58,12 +60,42 @@ func (c *compiler) agents() {
 		}
 
 		c.compaction(path+".compaction", a.Compaction)
+		c.permissions(path+".permissions", a.Permissions)
 		c.memory(path+".memory", a.Memory)
 		c.session(path+".memory.session", name, a.Memory)
 		c.systemPrompt(path, name, a)
 	}
 
 	c.delegationCycles()
+}
+
+// permissions checks an agent's permission rules parse and its default is
+// known.
+func (c *compiler) permissions(path string, p *spec.Permissions) {
+	if p == nil {
+		return
+	}
+
+	switch p.Default {
+	case "", spec.PermissionAllow, spec.PermissionDeny:
+	default:
+		c.errorf(path+".default", "must be %s or %s", spec.PermissionAllow, spec.PermissionDeny)
+	}
+
+	for _, r := range []struct {
+		field string
+		specs []string
+		with  func(...string) permission.Option
+	}{
+		{"allow", p.Allow, permission.WithAllow},
+		{"deny", p.Deny, permission.WithDeny},
+	} {
+		for i, rule := range r.specs {
+			if _, err := permission.New(r.with(rule)); err != nil {
+				c.errorf(fmt.Sprintf("%s.%s.%d", path, r.field, i), "%v", err)
+			}
+		}
+	}
 }
 
 // compaction checks an agent's compaction settings; an empty model means

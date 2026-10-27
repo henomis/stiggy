@@ -318,17 +318,8 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 		}
 	}
 
-	for _, t := range as.Tools {
-		ts, terr := s.tool(ctx, t)
-		if terr != nil {
-			return agentrun.Agent{}, terr
-		}
-
-		if terr = names.add(fmt.Sprintf("tool %q", t), ts...); terr != nil {
-			return agentrun.Agent{}, terr
-		}
-
-		out.Tools = append(out.Tools, ts...)
+	if err = s.agentTools(ctx, as, &out, names); err != nil {
+		return agentrun.Agent{}, err
 	}
 
 	for _, k := range as.Knowledge {
@@ -353,6 +344,33 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	}
 
 	return out, nil
+}
+
+// agentTools adds an agent's tool entries to out, under its permissions.
+func (s *assembly) agentTools(ctx context.Context, as spec.Agent, out *agentrun.Agent, names toolNames) error {
+	guard, err := toolGuard(as.Permissions)
+	if err != nil {
+		return fmt.Errorf("agent %q: %w", out.Name, err)
+	}
+
+	for _, t := range as.Tools {
+		ts, terr := s.tool(ctx, t)
+		if terr != nil {
+			return terr
+		}
+
+		if terr = names.add(fmt.Sprintf("tool %q", t), ts...); terr != nil {
+			return terr
+		}
+
+		if ts, terr = guard(ts); terr != nil {
+			return terr
+		}
+
+		out.Tools = append(out.Tools, ts...)
+	}
+
+	return nil
 }
 
 // compactor builds the summary compactor of cp; the agent's own model, own,

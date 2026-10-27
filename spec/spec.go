@@ -150,6 +150,9 @@ type Agent struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Tools name entries of [Fleet.Tools].
 	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Permissions decide which calls of the agent's Tools may run; nil
+	// allows them all.
+	Permissions *Permissions `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 	// MaxIterations bounds the agent loop of one step; 0 means phero's
 	// default (agent.DefaultMaxIterations, 25).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"`
@@ -177,6 +180,33 @@ type Agent struct {
 	// durable: if the step fails, they run again with it.
 	Delegates []string `yaml:"delegates,omitempty" json:"delegates,omitempty"`
 }
+
+// Permissions decide which tool calls an agent may make, with rules written
+// as a tool name, optionally followed by a pattern on what the call touches:
+// "bash(go test *)", "read(/repo/**)", "mcp_github_*". A call is denied when
+// a deny rule matches, else allowed when an allow rule matches, else given
+// Default. A denied call is reported to the model, which may go on another
+// way. Rules are matched as phero's permission package does: a bash command
+// line is split into its commands, each of which must be allowed, and a line
+// it cannot judge (a command substitution, a redirection to a file) is
+// denied unless an allow rule names it whole.
+type Permissions struct {
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
+	// Default is the decision for a call no rule matches: "allow" (the
+	// default) or "deny".
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	// WorkingDir is what relative file paths, in calls and in rules, are
+	// resolved against; set it to the file tools' working_dir. Empty means
+	// the worker's working directory.
+	WorkingDir string `yaml:"working_dir,omitempty" json:"working_dir,omitempty"`
+}
+
+// Permission defaults.
+const (
+	PermissionAllow = "allow"
+	PermissionDeny  = "deny"
+)
 
 // Memory types. Besides these, phero's memory backends simple, nats, psql
 // and rag are types (see package registry). phero's jsonfile is left out: it

@@ -445,13 +445,15 @@ models:
   lonely: {provider: openai, retry_backoff: 5s}
   cached: {provider: anthropic, prompt_cache_ttl: 1d}
 agents:
-  a: {model: lonely, max_parallel_tools: -1}
+  a: {model: lonely, max_parallel_tools: -1, permissions: {default: ask, allow: ["bash(go test *)"], deny: ["bash(rm"]}}
 `,
 			want: []string{
 				`3: models.negative.retry_backoff: must not be negative`,
 				`4: models.lonely.retry_backoff: needs retries`,
 				`5: models.cached.prompt_cache_ttl: must be 5m or 1h`,
 				`7: agents.a.max_parallel_tools: must not be negative`,
+				`7: agents.a.permissions.default: must be allow or deny`,
+				`7: agents.a.permissions.deny.0: `,
 			},
 		},
 		{

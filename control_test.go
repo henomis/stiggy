@@ -431,6 +431,67 @@ flows:
 	}
 }
 
+// TestPermissions checks an agent's permissions deny the calls they name,
+// and only for that agent: the other agent sharing the tool still calls it.
+func TestPermissions(t *testing.T) {
+	var calls atomic.Int32
+
+	note, err := llm.NewTool("note", "Takes a note.", func(context.Context, *struct{}) (string, error) {
+		calls.Add(1)
+
+		return "noted", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "note"}}}
+		}
+
+		return stiggytest.Response{Text: "result: " + r.ToolResults[0]}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents:
+  careful: {model: m, tools: [note], permissions: {deny: [note]}}
+  free: {model: m, tools: [note]}
+flows:
+  careful:
+    nodes:
+      - {id: careful, type: task, agent: careful}
+  free:
+    nodes:
+      - {id: free, type: task, agent: free}
+`, map[string]llm.LLM{"m": model}, stiggy.WithTool("note", note))
+
+	text := map[string]string{}
+
+	for _, f := range []string{"careful", "free"} {
+		st := h.Run(t, f, map[string]any{"x": 1})
+		if st.Status != packtrail.StatusCompleted {
+			t.Fatalf("%s: status %s: %s", f, st.Status, st.Error)
+		}
+
+		var out struct{ Text string }
+		if err = json.Unmarshal(st.Output, &out); err != nil {
+			t.Fatalf("%s: %v: %s", f, err, st.Output)
+		}
+
+		text[f] = out.Text
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("note ran %d times, want once (for free only)", got)
+	}
+
+	if !strings.Contains(text["careful"], "denied") || text["free"] != "result: noted" {
+		t.Fatalf("outputs = %q, want careful denied and free noted", text)
+	}
+}
+
 // TestTodo checks an agent with todo keeps a task list, published as
 // progress when it streams.
 func TestTodo(t *testing.T) {
