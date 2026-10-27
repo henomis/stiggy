@@ -24,8 +24,6 @@
 package spec
 
 import (
-	"fmt"
-
 	"gopkg.in/yaml.v3"
 
 	"github.com/henomis/packtrail/flow"
@@ -148,6 +146,9 @@ type Agent struct {
 	// MaxIterations bounds the agent loop of one step; 0 means phero's
 	// default (agent.DefaultMaxIterations, 25).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"`
+	// Compaction keeps the conversation within the model's context window
+	// by summarizing its older messages; nil disables it.
+	Compaction *Compaction `yaml:"compaction,omitempty" json:"compaction,omitempty"`
 	// Stream publishes the agent's text deltas and tool calls as packtrail
 	// progress events while a step runs (Client.Progress).
 	Stream bool `yaml:"stream,omitempty" json:"stream,omitempty"`
@@ -188,22 +189,36 @@ type Memory struct {
 	// PerExecution scopes a long-term memory to one execution: the session
 	// gets the execution id appended.
 	PerExecution bool `yaml:"per_execution,omitempty" json:"per_execution,omitempty"`
-	// Summarize keeps a long-term memory short by summarizing old messages.
-	Summarize *Summarize `yaml:"summarize,omitempty" json:"summarize,omitempty"`
 	// Knowledge names the [Fleet.Knowledge] entry a "rag" memory stores into.
 	Knowledge string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
 	// Options are specific to Type (max_items, path, bucket, dsn, ...).
 	Options map[string]any `yaml:",inline" json:"options,omitempty"`
 }
 
-// Summarize configures memory summarization.
-type Summarize struct {
-	// Model names the [Fleet.Models] entry that writes summaries.
-	Model string `yaml:"model" json:"model"`
-	// Threshold is the message count that triggers a summary.
-	Threshold uint `yaml:"threshold" json:"threshold"`
-	// Size is how many recent messages stay verbatim.
-	Size uint `yaml:"size" json:"size"`
+// Compaction configures how an agent compacts its conversation: the older
+// messages are replaced by a summary, the recent ones are kept whole. A
+// conversation is compacted when it reaches AtTokens, and whenever the model
+// rejects a prompt too long for its context window (then the call is made
+// again, once). With a long-term memory that keeps snapshots (simple, nats,
+// psql), the summary is stored too, and the next run starts from it.
+type Compaction struct {
+	// Model names the [Fleet.Models] entry that writes summaries; empty
+	// means the agent's own model.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+	// AtTokens is the conversation size, in tokens, that triggers a
+	// compaction; 0 compacts only on a context-length error.
+	AtTokens int `yaml:"at_tokens,omitempty" json:"at_tokens,omitempty"`
+	// KeepRecent bounds the recent messages kept whole; 0 means phero's
+	// default (agent.DefaultKeepRecent, 20).
+	KeepRecent int `yaml:"keep_recent,omitempty" json:"keep_recent,omitempty"`
+	// KeepTokens bounds the size of the messages kept whole; 0 means a
+	// quarter of AtTokens, or phero's default (agent.DefaultKeepTokens,
+	// 20000) without it.
+	KeepTokens int `yaml:"keep_tokens,omitempty" json:"keep_tokens,omitempty"`
+	// MaxSummaryTokens bounds the summary; 0 leaves it to the model.
+	MaxSummaryTokens int `yaml:"max_summary_tokens,omitempty" json:"max_summary_tokens,omitempty"`
+	// Prompt replaces phero's instructions to the summarizing model.
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 }
 
 // TypeOrDefault returns the memory type, [MemoryNone] when unset.
@@ -282,24 +297,6 @@ func (m *Memory) UnmarshalYAML(value *yaml.Node) error {
 	type plain Memory
 
 	return value.Decode((*plain)(m))
-}
-
-// UnmarshalYAML rejects unknown keys: Memory's custom decoding runs a fresh
-// decoder, which does not inherit the loader's strictness.
-func (s *Summarize) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(value.Content); i += 2 {
-			switch k := value.Content[i]; k.Value {
-			case "model", "threshold", "size":
-			default:
-				return fmt.Errorf("line %d: field %s not found in type spec.Summarize", k.Line, k.Value)
-			}
-		}
-	}
-
-	type plain Summarize
-
-	return value.Decode((*plain)(s))
 }
 
 // Remote is an agent served by someone else on the NATS Agent Protocol.

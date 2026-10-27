@@ -53,12 +53,43 @@ func (c *compiler) agents() {
 			c.errorf(path+".max_iterations", "must not be negative")
 		}
 
+		c.compaction(path+".compaction", a.Compaction)
 		c.memory(path+".memory", a.Memory)
 		c.session(path+".memory.session", name, a.Memory)
 		c.systemPrompt(path, name, a)
 	}
 
 	c.delegationCycles()
+}
+
+// compaction checks an agent's compaction settings; an empty model means
+// the agent's own.
+func (c *compiler) compaction(path string, cp *spec.Compaction) {
+	if cp == nil {
+		return
+	}
+
+	c.modelRef(path+".model", cp.Model, false)
+
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"at_tokens", cp.AtTokens},
+		{"keep_recent", cp.KeepRecent},
+		{"keep_tokens", cp.KeepTokens},
+		{"max_summary_tokens", cp.MaxSummaryTokens},
+	} {
+		if f.value < 0 {
+			c.errorf(path+"."+f.name, "must not be negative")
+		}
+	}
+
+	// The kept messages alone would reach the threshold, so every call
+	// would compact again.
+	if cp.AtTokens > 0 && cp.KeepTokens >= cp.AtTokens {
+		c.errorf(path+".keep_tokens", "must be below at_tokens")
+	}
 }
 
 // systemPrompt checks an agent's system prompt fields, which are templates
@@ -214,8 +245,14 @@ func (c *compiler) session(path, agent string, m spec.Memory) {
 func (c *compiler) memory(path string, m spec.Memory) {
 	typ := m.TypeOrDefault()
 
+	if _, ok := m.Options["summarize"]; ok {
+		c.errorf(path+".summarize", "memory summarization was replaced by the agent's compaction")
+
+		return
+	}
+
 	if !m.IsLongTerm() {
-		if len(m.Options) > 0 || m.Session != "" || m.PerExecution || m.Summarize != nil || m.Knowledge != "" {
+		if len(m.Options) > 0 || m.Session != "" || m.PerExecution || m.Knowledge != "" {
 			c.errorf(path, "memory %q takes no options", typ)
 		}
 
@@ -226,14 +263,6 @@ func (c *compiler) memory(path string, m spec.Memory) {
 		c.errorf(path+".type", "unknown memory type %q", typ)
 
 		return
-	}
-
-	if s := m.Summarize; s != nil {
-		c.modelRef(path+".summarize.model", s.Model, true)
-
-		if s.Threshold == 0 || s.Size == 0 || s.Size >= s.Threshold {
-			c.errorf(path+".summarize", "threshold and size must be positive, with size below threshold")
-		}
 	}
 
 	if m.Knowledge != "" {

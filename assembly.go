@@ -306,6 +306,12 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	out := agentrun.Agent{Name: name, Spec: as, LLM: l}
 	names := toolNames{agent: name, owners: map[string]string{}}
 
+	if as.Compaction != nil {
+		if out.Compactor, err = s.compactor(*as.Compaction, l); err != nil {
+			return agentrun.Agent{}, err
+		}
+	}
+
 	for _, t := range as.Tools {
 		ts, terr := s.tool(ctx, t)
 		if terr != nil {
@@ -341,6 +347,39 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	}
 
 	return out, nil
+}
+
+// compactor builds the summary compactor of cp; the agent's own model, own,
+// writes the summaries unless cp names another.
+func (s *assembly) compactor(cp spec.Compaction, own llm.LLM) (agent.Compactor, error) {
+	l := own
+
+	if cp.Model != "" {
+		var err error
+		if l, err = s.model(cp.Model); err != nil {
+			return nil, err
+		}
+	}
+
+	var opts []agent.SummaryCompactorOption
+
+	if cp.KeepRecent > 0 {
+		opts = append(opts, agent.WithSummaryKeepRecent(cp.KeepRecent))
+	}
+
+	if cp.KeepTokens > 0 {
+		opts = append(opts, agent.WithSummaryKeepTokens(cp.KeepTokens))
+	}
+
+	if cp.MaxSummaryTokens > 0 {
+		opts = append(opts, agent.WithSummaryMaxTokens(cp.MaxSummaryTokens))
+	}
+
+	if cp.Prompt != "" {
+		opts = append(opts, agent.WithSummaryPrompt(cp.Prompt))
+	}
+
+	return agent.NewSummaryCompactor(l, opts...), nil
 }
 
 // delegates adds an agent's delegates to out: remote ones as tools, agents
@@ -476,7 +515,6 @@ func (s *assembly) memoryFactory(m spec.Memory) agentrun.MemoryFactory {
 		return s.reg.BuildMemory(ctx, m, registry.MemoryEnv{
 			Env:       s.env,
 			Session:   session,
-			Model:     s.model,
 			Knowledge: func(name string) (*rag.RAG, error) { return s.knowledge(ctx, name) },
 		})
 	}

@@ -42,9 +42,7 @@ func delegateTools(delegates []Agent, data map[string]any) ([]*llm.Tool, error) 
 			return nil, fmt.Errorf("delegate %q: %w", d.Name, err)
 		}
 
-		if d.Spec.MaxIterations > 0 {
-			ag.SetMaxIterations(d.Spec.MaxIterations)
-		}
+		d.limit(ag)
 
 		sub, err := delegateTools(d.Delegates, data)
 		if err != nil {

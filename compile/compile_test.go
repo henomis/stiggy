@@ -281,9 +281,10 @@ vectorstores: {v: {type: qdrant}}
 knowledge:
   k: {embedder: e, vectorstore: ghost, sources: [{path: "", splitter: html}]}
 agents:
-  a: {model: m, delegates: [b], knowledge: [missing], memory: {type: simple, summarize: {model: zz, threshold: 5, size: 9}}}
+  a: {model: m, delegates: [b], knowledge: [missing], compaction: {model: zz, at_tokens: 5, keep_tokens: 9, keep_recent: -1}}
   b: {model: m, delegates: [a], memory: {type: execution, session: s}}
   c: {model: m, memory: redis}
+  d: {model: m, memory: {type: simple, summarize: {model: m, threshold: 5, size: 2}}}
 flows:
   f:
     channels: {_mem_x: {}}
@@ -296,12 +297,14 @@ flows:
 				`6: knowledge.k.sources.0.path: path is required`,
 				`6: knowledge.k.sources.0.splitter: unknown splitter "html"`,
 				`8: agents.a.knowledge: unknown knowledge "missing"`,
-				`8: agents.a.memory.summarize.model: unknown model "zz"`,
-				`8: agents.a.memory.summarize: threshold and size must be positive`,
+				`8: agents.a.compaction.model: unknown model "zz"`,
+				`8: agents.a.compaction.keep_recent: must not be negative`,
+				`8: agents.a.compaction.keep_tokens: must be below at_tokens`,
 				`8: agents.a.delegates: delegation cycle: a -> b -> a`,
 				`9: agents.b.memory: memory "execution" takes no options`,
 				`10: agents.c.memory.type: unknown memory type "redis"`,
-				`13: flows.f.channels._mem_x: channel names starting with "_mem_" are reserved`,
+				`11: agents.d.memory.summarize: memory summarization was replaced by the agent's compaction`,
+				`14: flows.f.channels._mem_x: channel names starting with "_mem_" are reserved`,
 			},
 		},
 		{

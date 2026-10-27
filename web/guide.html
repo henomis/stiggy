@@ -204,6 +204,7 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
     <span class="c-key">knowledge</span>: [handbook]               <span class="c-com"># one search_&lt;name&gt; tool each</span>
     <span class="c-key">delegates</span>: [researcher, legal]      <span class="c-com"># agents or remotes, as ask_&lt;name&gt; tools</span>
     <span class="c-key">max_iterations</span>: <span class="c-num">10</span>                  <span class="c-com"># default 25</span>
+    <span class="c-key">compaction</span>: {<span class="c-key">at_tokens</span>: <span class="c-num">100000</span>}     <span class="c-com"># see below</span>
     <span class="c-key">stream</span>: <span class="c-num">true</span>                        <span class="c-com"># progress events while it runs</span>
     <span class="c-key">memory</span>: execution                   <span class="c-com"># see below</span></code></pre>
 <p>Agents run in-process inside packtrail workers of kind <code>agent-&lt;name&gt;</code>. Each job builds a fresh phero agent.</p>
@@ -215,13 +216,22 @@ stiggy start -ns newsroom article -input '{"topic": "NATS"}' -wait</code></pre><
 <p><code>system</code>, <code>role</code>, <code>goal</code> and <code>backstory</code> are templates over the job context, like a step <a href="#prompts">prompt</a>: <code>role: "{{.item.name}}"</code> gives each item of a map its own persona, and delegates render over the job of the step that delegates. Exposed agents and their delegates answer outside any job, so a template in theirs is rejected.</p>
 <h3 id="memory">memory</h3>
 <div class="tablewrap"><table><thead><tr><th>Type</th><th>Kept in</th><th>Notes</th></tr></thead><tbody><tr><td><code>none</code> (default)</td><td>nowhere</td><td>Every step starts fresh</td></tr><tr><td><code>execution</code></td><td>the execution's state (hidden channel <code>_mem_&lt;agent&gt;</code>)</td><td>Correct under fork, rerun and time travel</td></tr><tr><td><code>simple</code></td><td>the worker process</td><td><code>max_items</code> (default 100)</td></tr><tr><td><code>nats</code></td><td>NATS KV</td><td><code>bucket</code></td></tr><tr><td><code>psql</code></td><td>PostgreSQL</td><td><code>dsn</code>, <code>table</code>, <code>ensure_schema</code></td></tr><tr><td><code>rag</code></td><td>a knowledge index</td><td><code>knowledge</code></td></tr></tbody></table></div>
-<p>Long-term types (all but <code>none</code> and <code>execution</code>) take <code>summarize</code>. All of them but <code>rag</code> also take <code>session</code> and <code>per_execution</code>; a <code>rag</code> memory is one collection shared by every job, so either is rejected on it.</p>
+<p>Long-term types (all but <code>none</code> and <code>execution</code>) take <code>session</code> and <code>per_execution</code>, except <code>rag</code>: a <code>rag</code> memory is one collection shared by every job, so either is rejected on it.</p>
 <ul>
 <li><code>session</code>: default the agent's name, shared by every execution. It is a template over the job context, so <code>session: "user-{{.input.user_id}}"</code> keeps one memory per user. A missing or empty value fails the step instead of falling back to a shared session: a missing key, a null value, or an action that renders nothing, as with <code>user_id: ""</code>. An action that only declares a variable (<code>{{$u := .input.user_id}}</code>) is exempt. The result must be letters, digits, <code>-</code> <code>_</code> <code>=</code> <code>/</code> and inner dots. A templated session is rejected on an exposed agent;</li>
-<li><code>per_execution: true</code>: append the execution id to the session;</li>
-<li><code>summarize: {model, threshold, size}</code>.</li>
+<li><code>per_execution: true</code>: append the execution id to the session.</li>
 </ul>
-<p><code>memory</code> may be a bare type (<code>memory: execution</code>) or a mapping (<code>memory: {type: nats, bucket: crew-memory, per_execution: true}</code>).</p></section>
+<p><code>memory</code> may be a bare type (<code>memory: execution</code>) or a mapping (<code>memory: {type: nats, bucket: crew-memory, per_execution: true}</code>).</p>
+<h3 id="compaction">compaction</h3>
+<p><code>compaction</code> keeps an agent's conversation within the model's context window: the older messages are replaced by a summary, the recent ones are kept whole. It works with any memory, including none: a long tool loop within one step is compacted too.</p>
+<ul>
+<li><code>at_tokens</code>: the conversation size that triggers a compaction. Without it, the conversation is compacted only when the model rejects a prompt as too long; the call is then made again, once;</li>
+<li><code>model</code>: the model that writes summaries, default the agent's own;</li>
+<li><code>keep_recent</code> (default 20) and <code>keep_tokens</code> (default a quarter of <code>at_tokens</code>): how many recent messages, and how many of their tokens, stay whole;</li>
+<li><code>max_summary_tokens</code>: a bound on the summary;</li>
+<li><code>prompt</code>: replaces the instructions to the summarizing model.</li>
+</ul>
+<p>With a <code>simple</code>, <code>nats</code> or <code>psql</code> memory the summary is stored, and the next run starts from it rather than from the whole history. The memory still keeps every message. Compaction replaces the <code>summarize</code> memory option of earlier versions, which is now rejected.</p></section>
 <section id="knowledge"><h2>Embedders, vector stores &amp; knowledge</h2>
 <pre><code><span class="c-key">embedders</span>:
   <span class="c-key">small</span>: {<span class="c-key">provider</span>: openai, <span class="c-key">model</span>: text-embedding-3-small, <span class="c-key">api_key</span>: <span class="c-str">"${OPENAI_API_KEY}"</span>}  <span class="c-com"># or ollama</span>

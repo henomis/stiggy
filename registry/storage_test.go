@@ -31,13 +31,8 @@ func memEnv(t *testing.T, env registry.Env, session string) registry.MemoryEnv {
 	t.Helper()
 
 	return registry.MemoryEnv{
-		Env:     env,
-		Session: session,
-		Model: func(string) (llm.LLM, error) {
-			return llm.Func(func(context.Context, []llm.Message, ...llm.CallOption) (*llm.Result, error) {
-				return nil, errors.New("unused")
-			}), nil
-		},
+		Env:       env,
+		Session:   session,
 		Knowledge: func(string) (*rag.RAG, error) { return nil, errors.New("no knowledge") },
 	}
 }
@@ -47,11 +42,10 @@ func TestBuiltinMemories(t *testing.T) {
 	ctx := context.Background()
 	srv := packtrailtest.Start(t)
 	env := registry.Env{Conn: srv.Connect(t)}
-	sum := &spec.Summarize{Model: "m", Threshold: 20, Size: 5}
 
 	for _, m := range []spec.Memory{
-		{Type: "simple", Options: map[string]any{"max_items": 10}, Summarize: sum},
-		{Type: "nats", Options: map[string]any{"bucket": "stiggy-test-mem"}, Summarize: sum},
+		{Type: "simple", Options: map[string]any{"max_items": 10}},
+		{Type: "nats", Options: map[string]any{"bucket": "stiggy-test-mem"}},
 	} {
 		if err := r.ValidateMemory(m); err != nil {
 			t.Errorf("%s: validate: %v", m.Type, err)

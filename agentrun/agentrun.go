@@ -55,8 +55,23 @@ type Agent struct {
 	// Memory builds the long-term memory of a session, when the spec's
 	// memory is one (not none or execution).
 	Memory MemoryFactory
+	// Compactor compacts the conversation, as Spec.Compaction sets it up;
+	// nil disables compaction.
+	Compactor agent.Compactor
 	// Delegates are the agents this one may call as tools.
 	Delegates []Agent
+}
+
+// limit applies the agent's iteration limit and compaction to ag.
+func (a Agent) limit(ag *agent.Agent) {
+	// Unset keeps phero's default (agent.DefaultMaxIterations).
+	if a.Spec.MaxIterations > 0 {
+		ag.SetMaxIterations(a.Spec.MaxIterations)
+	}
+
+	if a.Compactor != nil && a.Spec.Compaction != nil {
+		ag.SetCompaction(a.Compactor, a.Spec.Compaction.AtTokens)
+	}
 }
 
 // FlowSource returns a registered flow version; *packtrail.Client is one.
@@ -318,10 +333,7 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		}
 	}
 
-	// Unset keeps phero's default (agent.DefaultMaxIterations).
-	if r.a.Spec.MaxIterations > 0 {
-		ag.SetMaxIterations(r.a.Spec.MaxIterations)
-	}
+	r.a.limit(ag)
 
 	if schema != nil {
 		f, ferr := responseFormat(node, schema)

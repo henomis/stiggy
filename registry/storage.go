@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"github.com/henomis/phero/v2/embedding"
-	"github.com/henomis/phero/v2/llm"
 	"github.com/henomis/phero/v2/memory"
 	"github.com/henomis/phero/v2/rag"
 	"github.com/henomis/phero/v2/vectorstore"
@@ -36,25 +35,8 @@ type MemoryEnv struct {
 	// Session is the memory session: the spec's session (default: the agent
 	// name), with the execution id appended when per_execution is set.
 	Session string
-	// Model returns a fleet model, for summarization.
-	Model func(name string) (llm.LLM, error)
 	// Knowledge returns a fleet knowledge index, for "rag" memory.
 	Knowledge func(name string) (*rag.RAG, error)
-}
-
-// Summarization returns the summarization model and settings of m, nil when
-// it has none.
-func (e MemoryEnv) Summarization(m spec.Memory) (llm.LLM, *spec.Summarize, error) {
-	if m.Summarize == nil {
-		return nil, nil, nil
-	}
-
-	l, err := e.Model(m.Summarize.Model)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return l, m.Summarize, nil
 }
 
 // MemoryType builds a phero memory backend. Create one with [NewMemoryType].

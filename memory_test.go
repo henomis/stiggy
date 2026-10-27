@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -184,6 +185,65 @@ flows:
 
 	if got := lens.seen(); len(got) != 2 || got[1] != 1 {
 		t.Fatalf("assistant messages seen = %v, want the second execution to remember the first", got)
+	}
+}
+
+// TestCompaction checks an agent's conversation is compacted: the summary
+// model replaces the older messages, and the agent's model sees the summary
+// instead of them.
+func TestCompaction(t *testing.T) {
+	var summaries atomic.Int32
+
+	summarizer := stiggytest.Model(func(stiggytest.Request) stiggytest.Response {
+		summaries.Add(1)
+
+		return stiggytest.Response{Text: "SUMMARY"}
+	})
+
+	var (
+		mu   sync.Mutex
+		seen [][]llm.Message
+	)
+
+	clerk := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		mu.Lock()
+		defer mu.Unlock()
+
+		seen = append(seen, r.Messages)
+
+		return stiggytest.Response{Text: "noted"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}, s: {provider: x}}
+agents:
+  clerk:
+    model: m
+    compaction: {model: s, at_tokens: 1, keep_recent: 1}
+    memory: {type: simple}
+flows:
+  note:
+    nodes:
+      - {id: note, type: task, agent: clerk}
+`, map[string]llm.LLM{"m": clerk, "s": summarizer})
+
+	for range 2 {
+		if st := h.Run(t, "note", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
+			t.Fatalf("status %s: %s", st.Status, st.Error)
+		}
+	}
+
+	if summaries.Load() == 0 {
+		t.Fatal("the summary model was never called")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	last := seen[len(seen)-1]
+	if !slices.ContainsFunc(last, func(m llm.Message) bool { return strings.Contains(m.TextContent(), "SUMMARY") }) ||
+		slices.ContainsFunc(last, func(m llm.Message) bool { return m.Role == llm.RoleAssistant }) {
+		t.Fatalf("second execution saw %v, want the summary instead of the first answer", last)
 	}
 }
 

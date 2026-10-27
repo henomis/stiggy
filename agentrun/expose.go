@@ -162,9 +162,7 @@ func (e *exposed) run(ctx context.Context, parts ...llm.ContentPart) (*agent.Res
 		}
 	}
 
-	if e.a.Spec.MaxIterations > 0 {
-		ag.SetMaxIterations(e.a.Spec.MaxIterations)
-	}
+	e.a.limit(ag)
 
 	if e.sessions != nil {
 		mem := e.a.Spec.Memory

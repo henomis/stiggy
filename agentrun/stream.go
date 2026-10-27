@@ -110,7 +110,7 @@ func runStreaming(ctx context.Context, job *worker.Job, name string, ag *agent.A
 			p.send(Progress{Type: ProgressToolResult, Tool: ev.ToolName, IsError: ev.ToolError})
 		case agent.EventDone:
 			return ev.Result, nil
-		case agent.EventReasoningDelta:
+		case agent.EventReasoningDelta, agent.EventUsage, agent.EventCompactionStart, agent.EventCompactionEnd:
 		}
 	}
 
