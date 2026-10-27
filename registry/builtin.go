@@ -15,9 +15,12 @@
 package registry
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 
 	"github.com/henomis/packtrail/flow"
 	"github.com/henomis/phero/v2/llm"
@@ -28,6 +31,7 @@ import (
 	"github.com/henomis/phero/v2/tool/file"
 	"github.com/henomis/phero/v2/tool/kv"
 	"github.com/henomis/phero/v2/tool/skill"
+	"github.com/henomis/phero/v2/tool/web"
 
 	"github.com/henomis/stiggy/spec"
 )
@@ -170,11 +174,37 @@ type bashOptions struct {
 	Timeout        flow.Duration `json:"timeout"`
 	MaxTimeout     flow.Duration `json:"max_timeout"`
 	MaxOutputChars int           `json:"max_output_chars"`
+	// Env adds variables to every command's environment; EnvAllowlist
+	// limits the inherited environment to the names listed.
+	Env          map[string]string `json:"env"`
+	EnvAllowlist []string          `json:"env_allowlist"`
+	// BackgroundTimeout and MaxBackgroundOutput bound commands run in the
+	// background.
+	BackgroundTimeout   flow.Duration `json:"background_timeout"`
+	MaxBackgroundOutput int           `json:"max_background_output"`
+	// Sandbox runs every command in a sandbox.
+	Sandbox *sandboxOptions `json:"sandbox"`
+}
+
+// sandboxOptions configures the sandbox of bash commands. The only type is
+// bubblewrap: commands may write in workspace (default: the tool's
+// working_dir) and the writable paths, read the read_only ones, and reach
+// the network only with network set.
+type sandboxOptions struct {
+	Type      string   `json:"type"`
+	Workspace string   `json:"workspace"`
+	Writable  []string `json:"writable"`
+	ReadOnly  []string `json:"read_only"`
+	Network   bool     `json:"network"`
 }
 
 type fileOptions struct {
-	WorkingDir  string `json:"working_dir"`
-	MaxFileSize int64  `json:"max_file_size"`
+	WorkingDir     string   `json:"working_dir"`
+	MaxFileSize    int64    `json:"max_file_size"`
+	ReadOnlyRoots  []string `json:"read_only_roots"`
+	MaxOutputChars int      `json:"max_output_chars"`
+	MaxResults     int      `json:"max_results"`
+	NoIgnore       bool     `json:"no_ignore"`
 }
 
 type fileWriteOptions struct {
@@ -183,8 +213,19 @@ type fileWriteOptions struct {
 	NoOverwrite bool `json:"no_overwrite"`
 }
 
+// skillOptions reads skills from root, or from several roots; an earlier
+// root wins a skill name held by several.
 type skillOptions struct {
-	Root string `json:"root"`
+	Root  string   `json:"root"`
+	Roots []string `json:"roots"`
+}
+
+type webOptions struct {
+	AllowedHosts    []string      `json:"allowed_hosts"`
+	PrivateNetworks bool          `json:"private_networks"`
+	Timeout         flow.Duration `json:"timeout"`
+	MaxBytes        int64         `json:"max_bytes"`
+	MaxOutputChars  int           `json:"max_output_chars"`
 }
 
 type kvOptions struct {
@@ -210,14 +251,28 @@ func (o fileOptions) phero() []file.Option {
 		opts = append(opts, file.WithMaxFileSize(o.MaxFileSize))
 	}
 
+	if len(o.ReadOnlyRoots) > 0 {
+		opts = append(opts, file.WithReadOnlyRoots(o.ReadOnlyRoots...))
+	}
+
+	if o.MaxOutputChars > 0 {
+		opts = append(opts, file.WithMaxOutputChars(o.MaxOutputChars))
+	}
+
+	if o.MaxResults > 0 {
+		opts = append(opts, file.WithMaxResults(o.MaxResults))
+	}
+
+	if o.NoIgnore {
+		opts = append(opts, file.WithNoIgnore())
+	}
+
 	return opts
 }
 
 func builtinToolTypes() map[string]ToolType {
 	return map[string]ToolType{
-		"bash": NewToolType(func(_ context.Context, o bashOptions, _ Env) ([]*llm.Tool, error) {
-			return toolOf(bash.New(o.phero()...))
-		}),
+		"bash": NewToolType(newBash),
 		"file_read": NewToolType(func(_ context.Context, o fileOptions, _ Env) ([]*llm.Tool, error) {
 			return toolOf(file.NewReadTool(o.phero()...))
 		}),
@@ -232,20 +287,18 @@ func builtinToolTypes() map[string]ToolType {
 		"file_edit": NewToolType(func(_ context.Context, o fileOptions, _ Env) ([]*llm.Tool, error) {
 			return toolOf(file.NewEditTool(o.phero()...))
 		}),
+		"file_multi_edit": NewToolType(func(_ context.Context, o fileOptions, _ Env) ([]*llm.Tool, error) {
+			return toolOf(file.NewMultiEditTool(o.phero()...))
+		}),
 		"glob": NewToolType(func(_ context.Context, o fileOptions, _ Env) ([]*llm.Tool, error) {
 			return toolOf(file.NewGlobTool(o.phero()...))
 		}),
 		"grep": NewToolType(func(_ context.Context, o fileOptions, _ Env) ([]*llm.Tool, error) {
 			return toolOf(file.NewGrepTool(o.phero()...))
 		}),
-		"skill": NewToolType(func(_ context.Context, o skillOptions, _ Env) ([]*llm.Tool, error) {
-			if o.Root == "" {
-				return nil, fmt.Errorf("%w: skill needs root", ErrOptions)
-			}
-
-			return toolOf(skill.New(o.Root))
-		}),
-		"mcp": NewToolType(newMCPTools),
+		"skill":     NewToolType(newSkill),
+		"web_fetch": NewToolType(newWebFetch),
+		"mcp":       NewToolType(newMCPTools),
 		"kv": NewToolType(func(_ context.Context, o kvOptions, env Env) ([]*llm.Tool, error) {
 			if o.Bucket == "" {
 				return nil, fmt.Errorf("%w: kv needs bucket", ErrOptions)
@@ -265,7 +318,81 @@ func builtinToolTypes() map[string]ToolType {
 	}
 }
 
-func (o bashOptions) phero() []bash.Option {
+// newBash builds a bash tool. Its background commands are killed when the
+// app stops.
+func newBash(_ context.Context, o bashOptions, env Env) ([]*llm.Tool, error) {
+	opts, err := o.phero()
+	if err != nil {
+		return nil, err
+	}
+
+	t, err := bash.New(opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	env.deferCleanup(t.Close)
+
+	return []*llm.Tool{t.Tool()}, nil
+}
+
+func newSkill(_ context.Context, o skillOptions, env Env) ([]*llm.Tool, error) {
+	roots := o.Roots
+	if o.Root != "" {
+		roots = append([]string{o.Root}, roots...)
+	}
+
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("%w: skill needs root or roots", ErrOptions)
+	}
+
+	t, err := skill.New(roots[0], skill.WithRoots(roots...))
+	if err != nil {
+		return nil, err
+	}
+
+	// A skill that cannot be used is left out; the others still load.
+	if env.Logger != nil {
+		for _, skipped := range t.Skipped() {
+			env.Logger.Warn("stiggy: skill skipped", "err", skipped)
+		}
+	}
+
+	return []*llm.Tool{t.Tool()}, nil
+}
+
+func newWebFetch(_ context.Context, o webOptions, _ Env) ([]*llm.Tool, error) {
+	var opts []web.Option
+
+	if len(o.AllowedHosts) > 0 {
+		opts = append(opts, web.WithAllowedHosts(o.AllowedHosts...))
+	}
+
+	if o.PrivateNetworks {
+		opts = append(opts, web.WithPrivateNetworks(true))
+	}
+
+	if o.Timeout > 0 {
+		opts = append(opts, web.WithTimeout(o.Timeout.D()))
+	}
+
+	if o.MaxBytes > 0 {
+		opts = append(opts, web.WithMaxBytes(o.MaxBytes))
+	}
+
+	if o.MaxOutputChars > 0 {
+		opts = append(opts, web.WithMaxOutputChars(o.MaxOutputChars))
+	}
+
+	t, err := web.New(opts...).Tool()
+	if err != nil {
+		return nil, err
+	}
+
+	return []*llm.Tool{t}, nil
+}
+
+func (o bashOptions) phero() ([]bash.Option, error) {
 	var opts []bash.Option
 
 	if len(o.Allowlist) > 0 {
@@ -296,5 +423,61 @@ func (o bashOptions) phero() []bash.Option {
 		opts = append(opts, bash.WithMaxOutputChars(o.MaxOutputChars))
 	}
 
+	opts = append(opts, o.envOptions()...)
+
+	if o.Sandbox != nil {
+		runner, err := o.sandbox()
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, bash.WithRunner(runner))
+	}
+
+	return opts, nil
+}
+
+// envOptions returns the options for the commands' environment and their
+// background runs.
+func (o bashOptions) envOptions() []bash.Option {
+	var opts []bash.Option
+
+	if len(o.Env) > 0 {
+		entries := make([]string, 0, len(o.Env))
+		for _, k := range slices.Sorted(maps.Keys(o.Env)) {
+			entries = append(entries, k+"="+o.Env[k])
+		}
+
+		opts = append(opts, bash.WithEnv(entries...))
+	}
+
+	if len(o.EnvAllowlist) > 0 {
+		opts = append(opts, bash.WithEnvAllowlist(o.EnvAllowlist...))
+	}
+
+	if o.BackgroundTimeout > 0 {
+		opts = append(opts, bash.WithBackgroundTimeout(o.BackgroundTimeout.D()))
+	}
+
+	if o.MaxBackgroundOutput > 0 {
+		opts = append(opts, bash.WithMaxBackgroundOutput(o.MaxBackgroundOutput))
+	}
+
 	return opts
+}
+
+// sandbox returns the runner of o.Sandbox.
+func (o bashOptions) sandbox() (bash.Runner, error) {
+	sb := o.Sandbox
+	if sb.Type != "bubblewrap" {
+		return nil, fmt.Errorf("%w: unknown bash sandbox type %q", ErrOptions, sb.Type)
+	}
+
+	workspace := cmp.Or(sb.Workspace, o.WorkingDir)
+	if workspace == "" {
+		return nil, fmt.Errorf("%w: a bash sandbox needs workspace or working_dir", ErrOptions)
+	}
+
+	return bash.NewBubblewrapRunner(workspace, bash.WithWritablePaths(sb.Writable...),
+		bash.WithReadOnlyPaths(sb.ReadOnly...), bash.WithNetwork(sb.Network))
 }
