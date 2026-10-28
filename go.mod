@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/henomis/packtrail v1.0.3
-	github.com/henomis/phero/v2 v2.3.0-rc.7
+	github.com/henomis/phero/v2 v2.3.0-rc.8
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/modelcontextprotocol/go-sdk v1.4.0
 	github.com/nats-io/nats.go v1.52.0

@@ -254,12 +254,18 @@ flows:
 		}
 	}
 
-	if st, werr := h.Client.Wait(ctx, "note-2"); werr != nil || st.Status != packtrail.StatusCompleted {
-		t.Fatalf("second execution: %v, %v", st, werr)
+	st, err := h.Client.Wait(ctx, "note-2")
+	if err != nil || st.Status != packtrail.StatusCompleted {
+		t.Fatalf("second execution: %v, %v", st, err)
 	}
 
 	if summaries.Load() == 0 {
 		t.Fatal("the summary model was never called")
+	}
+
+	// The summary call counts in the step, next to the clerk's own.
+	if st.Counters["llm_calls"] != 2 {
+		t.Errorf("llm_calls = %v, want the clerk's call and the summary's", st.Counters["llm_calls"])
 	}
 
 	// The messages here are so short that the summary is no smaller than

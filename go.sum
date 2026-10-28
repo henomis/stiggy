@@ -145,8 +145,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 h1:5VipnvEpbqr2gA2VbM+nYVbkIF2
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDec4pTvgMSEixRuQKPTMH2bNs=
 github.com/henomis/packtrail v1.0.3 h1:Ke2L1l78PuXfyBzhhAaDV7QjsfqSKpRf2UlT2EE48Pk=
 github.com/henomis/packtrail v1.0.3/go.mod h1:eymIY9g3+cih4Cf+3X7xF+4Bvc4Qb54R7ZSm2KZ1mlw=
-github.com/henomis/phero/v2 v2.3.0-rc.7 h1:FDcEWOeWgdE5lzXp9BI4F28sPvpk0TyfJnJISakBcf0=
-github.com/henomis/phero/v2 v2.3.0-rc.7/go.mod h1:dloVWaVeSgRmVLQfIe9kG3uhxL7bTEkV/iRX7eqrGMA=
+github.com/henomis/phero/v2 v2.3.0-rc.8 h1:kIvfGA4F8YmoTJKGnsbb/VEMquYnZAnGEZ3KP9n2E+0=
+github.com/henomis/phero/v2 v2.3.0-rc.8/go.mod h1:dloVWaVeSgRmVLQfIe9kG3uhxL7bTEkV/iRX7eqrGMA=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcIi21E=
 github.com/invopop/jsonschema v0.13.0/go.mod h1:ffZ5Km5SWWRAIN6wbDXItl95euhFz2uON45H2qjYt+0=
