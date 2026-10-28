@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/henomis/packtrail v1.0.3
-	github.com/henomis/phero/v2 v2.2.0
+	github.com/henomis/phero/v2 v2.3.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/modelcontextprotocol/go-sdk v1.4.0
 	github.com/nats-io/nats.go v1.52.0
@@ -96,4 +96,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )

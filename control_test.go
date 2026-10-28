@@ -21,8 +21,10 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/henomis/packtrail"
 	"github.com/henomis/packtrail/flow"
@@ -30,6 +32,7 @@ import (
 	"github.com/henomis/phero/v2/llm"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/config"
 	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
@@ -370,6 +373,179 @@ flows:
 	st := h.Run(t, "loop", map[string]any{})
 	if st.Status != packtrail.StatusFailed || !strings.Contains(st.Reason, "budget") {
 		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
+	}
+}
+
+// TestMaxParallelTools checks max_parallel_tools bounds the tool calls of one
+// model answer that run at once.
+func TestMaxParallelTools(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		running, most int
+	)
+
+	slow, err := llm.NewTool("slow", "Takes a while.", func(context.Context, *struct{}) (string, error) {
+		mu.Lock()
+		running++
+		most = max(most, running)
+		mu.Unlock()
+
+		time.Sleep(20 * time.Millisecond)
+
+		mu.Lock()
+		running--
+		mu.Unlock()
+
+		return "done", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "slow"}, {Tool: "slow"}, {Tool: "slow"}}}
+		}
+
+		return stiggytest.Response{Text: "all done"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {worker: {model: m, tools: [slow], max_parallel_tools: 1}}
+flows:
+  work:
+    nodes:
+      - {id: work, type: task, agent: worker}
+`, map[string]llm.LLM{"m": model}, stiggy.WithTool("slow", slow))
+
+	if st := h.Run(t, "work", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if most != 1 {
+		t.Fatalf("at most %d tool calls ran at once, want 1", most)
+	}
+}
+
+// TestPermissions checks an agent's permissions deny the calls they name,
+// and only for that agent: the other agent sharing the tool still calls it.
+func TestPermissions(t *testing.T) {
+	var calls atomic.Int32
+
+	note, err := llm.NewTool("note", "Takes a note.", func(context.Context, *struct{}) (string, error) {
+		calls.Add(1)
+
+		return "noted", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "note"}}}
+		}
+
+		return stiggytest.Response{Text: "result: " + r.ToolResults[0]}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents:
+  careful: {model: m, tools: [note], permissions: {deny: [note]}}
+  free: {model: m, tools: [note]}
+flows:
+  careful:
+    nodes:
+      - {id: careful, type: task, agent: careful}
+  free:
+    nodes:
+      - {id: free, type: task, agent: free}
+`, map[string]llm.LLM{"m": model}, stiggy.WithTool("note", note))
+
+	text := map[string]string{}
+
+	for _, f := range []string{"careful", "free"} {
+		st := h.Run(t, f, map[string]any{"x": 1})
+		if st.Status != packtrail.StatusCompleted {
+			t.Fatalf("%s: status %s: %s", f, st.Status, st.Error)
+		}
+
+		var out struct{ Text string }
+		if err = json.Unmarshal(st.Output, &out); err != nil {
+			t.Fatalf("%s: %v: %s", f, err, st.Output)
+		}
+
+		text[f] = out.Text
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("note ran %d times, want once (for free only)", got)
+	}
+
+	if !strings.Contains(text["careful"], "denied") || text["free"] != "result: noted" {
+		t.Fatalf("outputs = %q, want careful denied and free noted", text)
+	}
+}
+
+// TestTodo checks an agent with todo keeps a task list, published as
+// progress when it streams.
+func TestTodo(t *testing.T) {
+	model := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		if len(r.ToolResults) == 0 {
+			return stiggytest.Response{Calls: []stiggytest.Call{{Tool: "todo_write", Args: map[string]any{
+				"todos": []any{
+					map[string]any{"content": "Read the brief", "status": "completed"},
+					map[string]any{"content": "Write the draft", "status": "in_progress"},
+				},
+			}}}}
+		}
+
+		return stiggytest.Response{Text: "list: " + r.ToolResults[0]}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}}
+agents: {planner: {model: m, todo: true, stream: true}}
+flows:
+  plan:
+    nodes:
+      - {id: plan, type: task, agent: planner}
+`, map[string]llm.LLM{"m": model})
+
+	ctx := ctxTimeout(t)
+
+	// Progress is not stored: subscribe before starting, with a known id.
+	events, err := h.Client.Progress(ctx, "plan-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = h.Client.Start(ctx, "plan", map[string]any{"x": 1}, packtrail.WithExecutionID("plan-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	var lists []agentrun.Progress
+
+	for ev := range events {
+		var p agentrun.Progress
+		if json.Unmarshal(ev.Data, &p) == nil && p.Type == agentrun.ProgressTodo {
+			lists = append(lists, p)
+		}
+	}
+
+	st, err := h.Client.Wait(ctx, "plan-1")
+	if err != nil || st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %v: %v", st, err)
+	}
+
+	if len(lists) != 1 || len(lists[0].Todos) != 2 || lists[0].Todos[1].Content != "Write the draft" ||
+		lists[0].Agent != "planner" {
+		t.Fatalf("todo progress = %+v, want the two-item list", lists)
 	}
 }
 

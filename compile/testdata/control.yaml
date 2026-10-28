@@ -23,7 +23,8 @@ agents:
   critic:
     model: m
     stream: true
-    memory: {type: nats, bucket: crew-memory, per_execution: true, summarize: {model: m, threshold: 40, size: 10}}
+    compaction: {at_tokens: 40000, keep_recent: 10}
+    memory: {type: nats, bucket: crew-memory, per_execution: true}
 flows:
   crew:
     start: plan

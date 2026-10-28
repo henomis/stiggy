@@ -102,6 +102,7 @@ func TestSystemPrompt(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	pe := func(code int) error { return &llm.ProviderError{Provider: "p", StatusCode: code, Err: errors.New("x")} }
+	overflow := &llm.ProviderError{Provider: "p", StatusCode: 500, ContextLengthExceeded: true, Err: errors.New("x")}
 
 	for err, permanent := range map[error]bool{
 		pe(http.StatusBadRequest):              true,
@@ -109,6 +110,7 @@ func TestClassify(t *testing.T) {
 		pe(http.StatusTooManyRequests):         false,
 		pe(http.StatusConflict):                false,
 		pe(http.StatusInternalServerError):     false,
+		overflow:                               true,
 		agent.ErrMaxIterationsReached:          true,
 		fmt.Errorf("wrapped: %w", pe(403)):     true,
 		errors.New("connection reset by peer"): false,

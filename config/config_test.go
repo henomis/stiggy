@@ -226,11 +226,11 @@ func TestEnvMissing(t *testing.T) {
 
 func TestStrictDecoding(t *testing.T) {
 	cases := map[string]string{
-		"unknown top-level key":   "modles: {}\n",
-		"unknown agent field":     "agents:\n  a: {model: m, temprature: 1}\n",
-		"unknown node field":      "flows:\n  f:\n    nodes:\n      - {id: s, type: task, agnet: a}\n",
-		"wrong type":              "agents:\n  a: {model: m, max_iterations: lots}\n",
-		"unknown summarize field": "agents:\n  a:\n    model: m\n    memory: {type: simple, summarize: {model: m, threshold: 10, size: 2, bogus: 1}}\n",
+		"unknown top-level key":    "modles: {}\n",
+		"unknown agent field":      "agents:\n  a: {model: m, temprature: 1}\n",
+		"unknown node field":       "flows:\n  f:\n    nodes:\n      - {id: s, type: task, agnet: a}\n",
+		"wrong type":               "agents:\n  a: {model: m, max_iterations: lots}\n",
+		"unknown compaction field": "agents:\n  a:\n    model: m\n    compaction: {at_tokens: 10, bogus: 1}\n",
 	}
 
 	for name, doc := range cases {

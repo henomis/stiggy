@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -209,23 +208,16 @@ func (s *assembly) withMiddleware(name string, m spec.Model, l llm.LLM) (llm.LLM
 }
 
 // transient reports whether a failed model call may succeed when retried. A
-// provider's 4xx answer is permanent (a bad request or key fails again the
-// same way), except a timeout (408) and a rate limit (429); anything else,
-// a 5xx or a network error, is worth another try.
+// provider's answer is judged by phero (a timeout, a conflict, a rate limit
+// or a 5xx is worth another try; a bad request, a bad key or a prompt too
+// long for the context window is not); any other error, a network failure
+// included, is retried, unless it is a guardrail block.
 func transient(err error) bool {
-	var pe *llm.ProviderError
-	if !errors.As(err, &pe) {
-		return true
+	if _, ok := errors.AsType[*llm.ProviderError](err); ok {
+		return llm.IsRetryable(err)
 	}
 
-	switch {
-	case pe.StatusCode == http.StatusRequestTimeout, pe.StatusCode == http.StatusTooManyRequests:
-		return true
-	case pe.StatusCode >= http.StatusBadRequest && pe.StatusCode < http.StatusInternalServerError:
-		return false
-	default:
-		return true
-	}
+	return !errors.Is(err, llm.ErrGuardrailBlocked)
 }
 
 func (s *assembly) tool(ctx context.Context, name string) ([]*llm.Tool, error) {
@@ -314,17 +306,20 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	out := agentrun.Agent{Name: name, Spec: as, LLM: l}
 	names := toolNames{agent: name, owners: map[string]string{}}
 
-	for _, t := range as.Tools {
-		ts, terr := s.tool(ctx, t)
-		if terr != nil {
-			return agentrun.Agent{}, terr
+	if as.Todo {
+		if err = names.claim("todo", agentrun.TodoToolName); err != nil {
+			return agentrun.Agent{}, err
 		}
+	}
 
-		if terr = names.add(fmt.Sprintf("tool %q", t), ts...); terr != nil {
-			return agentrun.Agent{}, terr
+	if as.Compaction != nil {
+		if out.Compactor, err = s.compactor(*as.Compaction, l); err != nil {
+			return agentrun.Agent{}, err
 		}
+	}
 
-		out.Tools = append(out.Tools, ts...)
+	if err = s.agentTools(ctx, as, &out, names); err != nil {
+		return agentrun.Agent{}, err
 	}
 
 	for _, k := range as.Knowledge {
@@ -349,6 +344,66 @@ func (s *assembly) agent(ctx context.Context, name string) (agentrun.Agent, erro
 	}
 
 	return out, nil
+}
+
+// agentTools adds an agent's tool entries to out, under its permissions.
+func (s *assembly) agentTools(ctx context.Context, as spec.Agent, out *agentrun.Agent, names toolNames) error {
+	guard, err := toolGuard(as.Permissions)
+	if err != nil {
+		return fmt.Errorf("agent %q: %w", out.Name, err)
+	}
+
+	for _, t := range as.Tools {
+		ts, terr := s.tool(ctx, t)
+		if terr != nil {
+			return terr
+		}
+
+		if terr = names.add(fmt.Sprintf("tool %q", t), ts...); terr != nil {
+			return terr
+		}
+
+		if ts, terr = guard(ts); terr != nil {
+			return terr
+		}
+
+		out.Tools = append(out.Tools, ts...)
+	}
+
+	return nil
+}
+
+// compactor builds the summary compactor of cp; the agent's own model, own,
+// writes the summaries unless cp names another.
+func (s *assembly) compactor(cp spec.Compaction, own llm.LLM) (agent.Compactor, error) {
+	l := own
+
+	if cp.Model != "" {
+		var err error
+		if l, err = s.model(cp.Model); err != nil {
+			return nil, err
+		}
+	}
+
+	var opts []agent.SummaryCompactorOption
+
+	if cp.KeepRecent > 0 {
+		opts = append(opts, agent.WithSummaryKeepRecent(cp.KeepRecent))
+	}
+
+	if cp.KeepTokens > 0 {
+		opts = append(opts, agent.WithSummaryKeepTokens(cp.KeepTokens))
+	}
+
+	if cp.MaxSummaryTokens > 0 {
+		opts = append(opts, agent.WithSummaryMaxTokens(cp.MaxSummaryTokens))
+	}
+
+	if cp.Prompt != "" {
+		opts = append(opts, agent.WithSummaryPrompt(cp.Prompt))
+	}
+
+	return agent.NewSummaryCompactor(l, opts...), nil
 }
 
 // delegates adds an agent's delegates to out: remote ones as tools, agents
@@ -484,7 +539,6 @@ func (s *assembly) memoryFactory(m spec.Memory) agentrun.MemoryFactory {
 		return s.reg.BuildMemory(ctx, m, registry.MemoryEnv{
 			Env:       s.env,
 			Session:   session,
-			Model:     s.model,
 			Knowledge: func(name string) (*rag.RAG, error) { return s.knowledge(ctx, name) },
 		})
 	}

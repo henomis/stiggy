@@ -24,8 +24,6 @@
 package spec
 
 import (
-	"fmt"
-
 	"gopkg.in/yaml.v3"
 
 	"github.com/henomis/packtrail/flow"
@@ -103,6 +101,13 @@ type Model struct {
 	// RateLimit caps the calls to this model. It applies
 	// per process: each worker process has its own budget.
 	RateLimit *RateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	// StrictTools set to false sends tool schemas without strict mode, for
+	// compatible servers that mishandle it; nil keeps strict mode (openai,
+	// ollama and anthropic only).
+	StrictTools *bool `yaml:"strict_tools,omitempty" json:"strict_tools,omitempty"`
+	// PromptCacheTTL turns on prompt caching with entries kept for 5m or 1h
+	// (anthropic only).
+	PromptCacheTTL string `yaml:"prompt_cache_ttl,omitempty" json:"prompt_cache_ttl,omitempty"`
 }
 
 // RateLimit bounds the calls to a model: their rate, their concurrency, or
@@ -145,9 +150,22 @@ type Agent struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Tools name entries of [Fleet.Tools].
 	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Permissions decide which calls of the agent's Tools may run; nil
+	// allows them all.
+	Permissions *Permissions `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 	// MaxIterations bounds the agent loop of one step; 0 means phero's
 	// default (agent.DefaultMaxIterations, 25).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"`
+	// Todo gives the agent a todo_write tool to keep a task list while it
+	// works on a long step. The list lasts one run: a step, a delegate's
+	// step, or a prompt to an exposed agent.
+	Todo bool `yaml:"todo,omitempty" json:"todo,omitempty"`
+	// MaxParallelTools bounds the tool calls of one model answer that run at
+	// once; 0 runs them all at once.
+	MaxParallelTools int `yaml:"max_parallel_tools,omitempty" json:"max_parallel_tools,omitempty"`
+	// Compaction keeps the conversation within the model's context window
+	// by summarizing its older messages; nil disables it.
+	Compaction *Compaction `yaml:"compaction,omitempty" json:"compaction,omitempty"`
 	// Stream publishes the agent's text deltas and tool calls as packtrail
 	// progress events while a step runs (Client.Progress).
 	Stream bool `yaml:"stream,omitempty" json:"stream,omitempty"`
@@ -162,6 +180,33 @@ type Agent struct {
 	// durable: if the step fails, they run again with it.
 	Delegates []string `yaml:"delegates,omitempty" json:"delegates,omitempty"`
 }
+
+// Permissions decide which tool calls an agent may make, with rules written
+// as a tool name, optionally followed by a pattern on what the call touches:
+// "bash(go test *)", "read(/repo/**)", "mcp_github_*". A call is denied when
+// a deny rule matches, else allowed when an allow rule matches, else given
+// Default. A denied call is reported to the model, which may go on another
+// way. Rules are matched as phero's permission package does: a bash command
+// line is split into its commands, each of which must be allowed, and a line
+// it cannot judge (a command substitution, a redirection to a file) is
+// denied unless an allow rule names it whole.
+type Permissions struct {
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
+	// Default is the decision for a call no rule matches: "allow" (the
+	// default) or "deny".
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	// WorkingDir is what relative file paths, in calls and in rules, are
+	// resolved against; set it to the file tools' working_dir. Empty means
+	// the worker's working directory.
+	WorkingDir string `yaml:"working_dir,omitempty" json:"working_dir,omitempty"`
+}
+
+// Permission defaults.
+const (
+	PermissionAllow = "allow"
+	PermissionDeny  = "deny"
+)
 
 // Memory types. Besides these, phero's memory backends simple, nats, psql
 // and rag are types (see package registry). phero's jsonfile is left out: it
@@ -188,22 +233,36 @@ type Memory struct {
 	// PerExecution scopes a long-term memory to one execution: the session
 	// gets the execution id appended.
 	PerExecution bool `yaml:"per_execution,omitempty" json:"per_execution,omitempty"`
-	// Summarize keeps a long-term memory short by summarizing old messages.
-	Summarize *Summarize `yaml:"summarize,omitempty" json:"summarize,omitempty"`
 	// Knowledge names the [Fleet.Knowledge] entry a "rag" memory stores into.
 	Knowledge string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
 	// Options are specific to Type (max_items, path, bucket, dsn, ...).
 	Options map[string]any `yaml:",inline" json:"options,omitempty"`
 }
 
-// Summarize configures memory summarization.
-type Summarize struct {
-	// Model names the [Fleet.Models] entry that writes summaries.
-	Model string `yaml:"model" json:"model"`
-	// Threshold is the message count that triggers a summary.
-	Threshold uint `yaml:"threshold" json:"threshold"`
-	// Size is how many recent messages stay verbatim.
-	Size uint `yaml:"size" json:"size"`
+// Compaction configures how an agent compacts its conversation: the older
+// messages are replaced by a summary, the recent ones are kept whole. A
+// conversation is compacted when it reaches AtTokens, and whenever the model
+// rejects a prompt too long for its context window (then the call is made
+// again, once). With a long-term memory that keeps snapshots (simple, nats,
+// psql), the summary is stored too, and the next run starts from it.
+type Compaction struct {
+	// Model names the [Fleet.Models] entry that writes summaries; empty
+	// means the agent's own model.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+	// AtTokens is the conversation size, in tokens, that triggers a
+	// compaction; 0 compacts only on a context-length error.
+	AtTokens int `yaml:"at_tokens,omitempty" json:"at_tokens,omitempty"`
+	// KeepRecent bounds the recent messages kept whole; 0 means phero's
+	// default (agent.DefaultKeepRecent, 20).
+	KeepRecent int `yaml:"keep_recent,omitempty" json:"keep_recent,omitempty"`
+	// KeepTokens bounds the size of the messages kept whole; 0 means a
+	// quarter of AtTokens, or phero's default (agent.DefaultKeepTokens,
+	// 20000) without it.
+	KeepTokens int `yaml:"keep_tokens,omitempty" json:"keep_tokens,omitempty"`
+	// MaxSummaryTokens bounds the summary; 0 leaves it to the model.
+	MaxSummaryTokens int `yaml:"max_summary_tokens,omitempty" json:"max_summary_tokens,omitempty"`
+	// Prompt replaces phero's instructions to the summarizing model.
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 }
 
 // TypeOrDefault returns the memory type, [MemoryNone] when unset.
@@ -282,24 +341,6 @@ func (m *Memory) UnmarshalYAML(value *yaml.Node) error {
 	type plain Memory
 
 	return value.Decode((*plain)(m))
-}
-
-// UnmarshalYAML rejects unknown keys: Memory's custom decoding runs a fresh
-// decoder, which does not inherit the loader's strictness.
-func (s *Summarize) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(value.Content); i += 2 {
-			switch k := value.Content[i]; k.Value {
-			case "model", "threshold", "size":
-			default:
-				return fmt.Errorf("line %d: field %s not found in type spec.Summarize", k.Line, k.Value)
-			}
-		}
-	}
-
-	type plain Summarize
-
-	return value.Decode((*plain)(s))
 }
 
 // Remote is an agent served by someone else on the NATS Agent Protocol.

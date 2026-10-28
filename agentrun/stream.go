@@ -23,6 +23,7 @@ import (
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/agent"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/tool/todo"
 )
 
 // Text deltas are coalesced into one progress event per interval or size,
@@ -37,6 +38,8 @@ const (
 	ProgressText       = "text"
 	ProgressToolCall   = "tool_call"
 	ProgressToolResult = "tool_result"
+	ProgressCompaction = "compaction"
+	ProgressTodo       = "todo"
 )
 
 // errNoResult is returned when a stream ends without its final event.
@@ -53,6 +56,29 @@ type Progress struct {
 	Tool    string `json:"tool,omitempty"`
 	Args    string `json:"args,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
+	// Trigger, TokensBefore and TokensAfter describe a compaction: why it
+	// ran (threshold, context length) and the conversation's estimated size
+	// before and after it. A failed compaction has IsError and the error in
+	// Text.
+	Trigger      string `json:"trigger,omitempty"`
+	TokensBefore int    `json:"tokens_before,omitempty"`
+	TokensAfter  int    `json:"tokens_after,omitempty"`
+	// Todos is the agent's task list, after each update.
+	Todos []todo.Item `json:"todos,omitempty"`
+}
+
+// compacted returns the progress event of a finished compaction.
+func compacted(c *agent.CompactionInfo) Progress {
+	ev := Progress{
+		Type: ProgressCompaction, Trigger: c.Trigger.String(),
+		TokensBefore: c.TokensBefore, TokensAfter: c.TokensAfter,
+	}
+
+	if c.Err != nil {
+		ev.IsError, ev.Text = true, c.Err.Error()
+	}
+
+	return ev
 }
 
 type progress struct {
@@ -110,7 +136,12 @@ func runStreaming(ctx context.Context, job *worker.Job, name string, ag *agent.A
 			p.send(Progress{Type: ProgressToolResult, Tool: ev.ToolName, IsError: ev.ToolError})
 		case agent.EventDone:
 			return ev.Result, nil
-		case agent.EventReasoningDelta:
+		case agent.EventCompactionEnd:
+			if ev.Compaction != nil && (ev.Compaction.Compacted || ev.Compaction.Err != nil) {
+				p.flush()
+				p.send(compacted(ev.Compaction))
+			}
+		case agent.EventReasoningDelta, agent.EventUsage, agent.EventCompactionStart:
 		}
 	}
 

@@ -53,7 +53,9 @@ func TestMCPTools(t *testing.T) {
 	var cleanups []func() error
 
 	env := registry.Env{Defer: func(f func() error) { cleanups = append(cleanups, f) }}
-	tool := spec.Tool{Type: "mcp", Options: map[string]any{"url": hs.URL, "allow": []any{"echo"}}}
+	tool := spec.Tool{Type: "mcp", Options: map[string]any{
+		"url": hs.URL, "allow": []any{"echo"}, "tool_prefix": "srv_", "max_output_chars": 100,
+	}}
 
 	r := registry.New()
 
@@ -66,8 +68,9 @@ func TestMCPTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(tools) != 1 || tools[0].Name() != "echo" {
-		t.Fatalf("tools = %v, want only echo", tools)
+	// allow names the server's own tool; the agent sees it prefixed.
+	if len(tools) != 1 || tools[0].Name() != "srv_echo" {
+		t.Fatalf("tools = %v, want only srv_echo", tools)
 	}
 
 	out, err := tools[0].Handle(context.Background(), `{"text":"hi"}`)

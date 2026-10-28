@@ -36,6 +36,11 @@ type mcpOptions struct {
 	URL     string            `json:"url"`
 	Allow   []string          `json:"allow"`
 	Deny    []string          `json:"deny"`
+	// ToolPrefix starts the name of each tool, so the tools of two servers
+	// do not clash; allow and deny still name the server's own tools.
+	ToolPrefix string `json:"tool_prefix"`
+	// MaxOutputChars caps the text of each tool result; 0 keeps it whole.
+	MaxOutputChars int `json:"max_output_chars"`
 }
 
 // newMCPTools connects to the server and lists its tools. The session stays
@@ -63,7 +68,17 @@ func newMCPTools(ctx context.Context, o mcpOptions, env Env) ([]*llm.Tool, error
 
 	env.deferCleanup(session.Close)
 
-	tools, err := pheromcp.New(session).AsTools(ctx, pheromcp.AllowDeny(o.Allow, o.Deny))
+	var opts []pheromcp.Option
+
+	if o.ToolPrefix != "" {
+		opts = append(opts, pheromcp.WithToolPrefix(o.ToolPrefix))
+	}
+
+	if o.MaxOutputChars > 0 {
+		opts = append(opts, pheromcp.WithMaxOutputChars(o.MaxOutputChars))
+	}
+
+	tools, err := pheromcp.New(session, opts...).AsTools(ctx, pheromcp.AllowDeny(o.Allow, o.Deny))
 	if err != nil {
 		return nil, fmt.Errorf("mcp: list tools: %w", err)
 	}

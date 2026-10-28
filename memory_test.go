@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"github.com/henomis/phero/v2/vectorstore"
 
 	"github.com/henomis/stiggy"
+	"github.com/henomis/stiggy/agentrun"
 	"github.com/henomis/stiggy/registry"
 	"github.com/henomis/stiggy/spec"
 	"github.com/henomis/stiggy/stiggytest"
@@ -184,6 +186,102 @@ flows:
 
 	if got := lens.seen(); len(got) != 2 || got[1] != 1 {
 		t.Fatalf("assistant messages seen = %v, want the second execution to remember the first", got)
+	}
+}
+
+// TestCompaction checks an agent's conversation is compacted: the summary
+// model replaces the older messages, the agent's model sees the summary
+// instead of them, and a streaming agent reports the compaction as progress.
+func TestCompaction(t *testing.T) {
+	var summaries atomic.Int32
+
+	summarizer := stiggytest.Model(func(stiggytest.Request) stiggytest.Response {
+		summaries.Add(1)
+
+		return stiggytest.Response{Text: "SUMMARY"}
+	})
+
+	var (
+		mu   sync.Mutex
+		seen [][]llm.Message
+	)
+
+	clerk := stiggytest.Model(func(r stiggytest.Request) stiggytest.Response {
+		mu.Lock()
+		defer mu.Unlock()
+
+		seen = append(seen, r.Messages)
+
+		return stiggytest.Response{Text: "noted"}
+	})
+
+	h := startYAML(t, `
+models: {m: {provider: x}, s: {provider: x}}
+agents:
+  clerk:
+    model: m
+    stream: true
+    compaction: {model: s, at_tokens: 1, keep_recent: 1}
+    memory: {type: simple}
+flows:
+  note:
+    nodes:
+      - {id: note, type: task, agent: clerk}
+`, map[string]llm.LLM{"m": clerk, "s": summarizer})
+
+	if st := h.Run(t, "note", map[string]any{"x": 1}); st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	ctx := ctxTimeout(t)
+
+	// Progress is not stored: subscribe before starting, with a known id.
+	events, err := h.Client.Progress(ctx, "note-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = h.Client.Start(ctx, "note", map[string]any{"x": 1}, packtrail.WithExecutionID("note-2")); err != nil {
+		t.Fatal(err)
+	}
+
+	var compactions []agentrun.Progress
+
+	for ev := range events {
+		var p agentrun.Progress
+		if json.Unmarshal(ev.Data, &p) == nil && p.Type == agentrun.ProgressCompaction {
+			compactions = append(compactions, p)
+		}
+	}
+
+	st, err := h.Client.Wait(ctx, "note-2")
+	if err != nil || st.Status != packtrail.StatusCompleted {
+		t.Fatalf("second execution: %v, %v", st, err)
+	}
+
+	if summaries.Load() == 0 {
+		t.Fatal("the summary model was never called")
+	}
+
+	// The summary call counts in the step, next to the clerk's own.
+	if st.Counters["llm_calls"] != 2 {
+		t.Errorf("llm_calls = %v, want the clerk's call and the summary's", st.Counters["llm_calls"])
+	}
+
+	// The messages here are so short that the summary is no smaller than
+	// what it replaces: only the sizes' presence is checked.
+	if len(compactions) != 1 || compactions[0].Trigger != "threshold" || compactions[0].IsError ||
+		compactions[0].TokensBefore == 0 || compactions[0].TokensAfter == 0 {
+		t.Fatalf("compaction progress = %+v, want one threshold compaction", compactions)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	last := seen[len(seen)-1]
+	if !slices.ContainsFunc(last, func(m llm.Message) bool { return strings.Contains(m.TextContent(), "SUMMARY") }) ||
+		slices.ContainsFunc(last, func(m llm.Message) bool { return m.Role == llm.RoleAssistant }) {
+		t.Fatalf("second execution saw %v, want the summary instead of the first answer", last)
 	}
 }
 

@@ -55,8 +55,27 @@ type Agent struct {
 	// Memory builds the long-term memory of a session, when the spec's
 	// memory is one (not none or execution).
 	Memory MemoryFactory
+	// Compactor compacts the conversation, as Spec.Compaction sets it up;
+	// nil disables compaction.
+	Compactor agent.Compactor
 	// Delegates are the agents this one may call as tools.
 	Delegates []Agent
+}
+
+// limit applies the agent's iteration limit and compaction to ag.
+func (a Agent) limit(ag *agent.Agent) {
+	// Unset keeps phero's default (agent.DefaultMaxIterations).
+	if a.Spec.MaxIterations > 0 {
+		ag.SetMaxIterations(a.Spec.MaxIterations)
+	}
+
+	if a.Spec.MaxParallelTools > 0 {
+		ag.SetMaxParallelTools(a.Spec.MaxParallelTools)
+	}
+
+	if a.Compactor != nil && a.Spec.Compaction != nil {
+		ag.SetCompaction(a.Compactor, a.Spec.Compaction.AtTokens)
+	}
 }
 
 // FlowSource returns a registered flow version; *packtrail.Client is one.
@@ -180,7 +199,7 @@ func (r *runner) attempt(ctx context.Context, job *worker.Job, step spec.Step, s
 		return nil, err
 	}
 
-	ag, err := r.build(job.Node, step, schema, data, ctl)
+	ag, err := r.build(job, step, schema, data, ctl)
 	if err != nil {
 		return nil, worker.Permanent(err)
 	}
@@ -288,7 +307,7 @@ func memoryWrite(agentName string, turn []llm.Message) map[string]any {
 }
 
 // build makes a fresh phero agent for one job.
-func (r *runner) build(node string, step spec.Step, schema, data map[string]any, ctl *control,
+func (r *runner) build(job *worker.Job, step spec.Step, schema, data map[string]any, ctl *control,
 ) (*agent.Agent, error) {
 	system, err := SystemPrompt(r.a.Name, r.a.Spec, data)
 	if err != nil {
@@ -310,7 +329,12 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
 	}
 
-	all := slices.Concat(r.a.Tools, delegates, steering)
+	own, err := r.a.runTools(r.a.todoProgress(job))
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: %w", r.a.Name, err)
+	}
+
+	all := slices.Concat(r.a.Tools, delegates, steering, own)
 
 	for _, t := range all {
 		if err = ag.AddTool(t); err != nil {
@@ -318,13 +342,10 @@ func (r *runner) build(node string, step spec.Step, schema, data map[string]any,
 		}
 	}
 
-	// Unset keeps phero's default (agent.DefaultMaxIterations).
-	if r.a.Spec.MaxIterations > 0 {
-		ag.SetMaxIterations(r.a.Spec.MaxIterations)
-	}
+	r.a.limit(ag)
 
 	if schema != nil {
-		f, ferr := responseFormat(node, schema)
+		f, ferr := responseFormat(job.Node, schema)
 		if ferr != nil {
 			return nil, ferr
 		}
@@ -392,6 +413,12 @@ func maxIterations(s spec.Agent) int {
 func classify(err error, maxIterations int) error {
 	if errors.Is(err, agent.ErrMaxIterationsReached) {
 		return worker.Permanent(fmt.Errorf("%s: reached %d: %w", trace.StopMaxIterations, maxIterations, err))
+	}
+
+	// The same prompt overflows the context window again, whatever status
+	// the provider answered it with.
+	if errors.Is(err, llm.ErrContextLengthExceeded) {
+		return worker.Permanent(err)
 	}
 
 	var pe *llm.ProviderError

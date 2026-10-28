@@ -24,7 +24,6 @@ import (
 
 	"github.com/henomis/phero/v2/embedding"
 	embeddingopenai "github.com/henomis/phero/v2/embedding/openai"
-	"github.com/henomis/phero/v2/llm"
 	"github.com/henomis/phero/v2/memory"
 	natsmemory "github.com/henomis/phero/v2/memory/nats"
 	psqlmemory "github.com/henomis/phero/v2/memory/psql"
@@ -58,25 +57,20 @@ type simpleMemoryOptions struct {
 
 type natsMemoryOptions struct {
 	Bucket string `json:"bucket"`
+	// PruneCompacted sets whether storing a compaction's summary drops the
+	// messages it stands for; unset keeps phero's default (on for nats, off
+	// for psql).
+	PruneCompacted *bool `json:"prune_compacted"`
 }
 
 type psqlMemoryOptions struct {
-	DSN          string `json:"dsn"`
-	Table        string `json:"table"`
-	EnsureSchema *bool  `json:"ensure_schema"`
+	DSN            string `json:"dsn"`
+	Table          string `json:"table"`
+	EnsureSchema   *bool  `json:"ensure_schema"`
+	PruneCompacted *bool  `json:"prune_compacted"`
 }
 
 type ragMemoryOptions struct{}
-
-// summarized is the common shape of phero's WithSummarization options.
-func summarized[O any](env MemoryEnv, m spec.Memory, with func(l llm.LLM, threshold, size uint) O) ([]O, error) {
-	l, s, err := env.Summarization(m)
-	if err != nil || s == nil {
-		return nil, err
-	}
-
-	return []O{with(l, s.Threshold, s.Size)}, nil
-}
 
 func builtinMemoryTypes() map[string]MemoryType {
 	return map[string]MemoryType{
@@ -87,21 +81,16 @@ func builtinMemoryTypes() map[string]MemoryType {
 	}
 }
 
-func newSimpleMemory(_ context.Context, o simpleMemoryOptions, m spec.Memory, env MemoryEnv) (memory.Memory, error) {
-	opts, err := summarized(env, m, simplememory.WithSummarization)
-	if err != nil {
-		return nil, err
-	}
-
+func newSimpleMemory(_ context.Context, o simpleMemoryOptions, _ spec.Memory, _ MemoryEnv) (memory.Memory, error) {
 	n := o.MaxItems
 	if n == 0 {
 		n = defaultSimpleMaxItems
 	}
 
-	return simplememory.New(n, opts...), nil
+	return simplememory.New(n), nil
 }
 
-func newNATSMemory(_ context.Context, o natsMemoryOptions, m spec.Memory, env MemoryEnv) (memory.Memory, error) {
+func newNATSMemory(_ context.Context, o natsMemoryOptions, _ spec.Memory, env MemoryEnv) (memory.Memory, error) {
 	if o.Bucket == "" {
 		return nil, fmt.Errorf("%w: nats memory needs bucket", ErrOptions)
 	}
@@ -110,24 +99,22 @@ func newNATSMemory(_ context.Context, o natsMemoryOptions, m spec.Memory, env Me
 		return nil, fmt.Errorf("%w: nats memory needs a NATS connection", ErrOptions)
 	}
 
-	opts, err := summarized(env, m, natsmemory.WithSummarization)
-	if err != nil {
-		return nil, err
+	var opts []natsmemory.Option
+
+	if o.PruneCompacted != nil {
+		opts = append(opts, natsmemory.WithPruneCompacted(*o.PruneCompacted))
 	}
 
 	return natsmemory.Open(env.Conn, o.Bucket, env.Session, opts...)
 }
 
-func newPsqlMemory(_ context.Context, o psqlMemoryOptions, m spec.Memory, env MemoryEnv) (memory.Memory, error) {
+func newPsqlMemory(_ context.Context, o psqlMemoryOptions, _ spec.Memory, env MemoryEnv) (memory.Memory, error) {
 	db, err := env.sqlDB(o.DSN)
 	if err != nil {
 		return nil, err
 	}
 
-	opts, err := summarized(env, m, psqlmemory.WithSummarization)
-	if err != nil {
-		return nil, err
-	}
+	var opts []psqlmemory.Option
 
 	if o.Table != "" {
 		opts = append(opts, psqlmemory.WithTable(o.Table))
@@ -135,6 +122,10 @@ func newPsqlMemory(_ context.Context, o psqlMemoryOptions, m spec.Memory, env Me
 
 	if o.EnsureSchema != nil {
 		opts = append(opts, psqlmemory.WithEnsureSchema(*o.EnsureSchema))
+	}
+
+	if o.PruneCompacted != nil {
+		opts = append(opts, psqlmemory.WithPruneCompacted(*o.PruneCompacted))
 	}
 
 	return psqlmemory.New(db, env.Session, opts...)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/henomis/packtrail/worker"
 	"github.com/henomis/phero/v2/llm"
+	"github.com/henomis/phero/v2/tool/bash"
 
 	"github.com/henomis/stiggy/registry"
 	"github.com/henomis/stiggy/spec"
@@ -31,13 +32,18 @@ func TestBuiltinTools(t *testing.T) {
 	dir := t.TempDir()
 
 	for typ, opts := range map[string]map[string]any{
-		"bash":       {"allowlist": []any{"ls"}, "timeout": "5s", "working_dir": dir},
-		"file_read":  {"working_dir": dir},
-		"file_write": {"working_dir": dir, "no_overwrite": true},
-		"file_edit":  nil,
-		"glob":       nil,
-		"grep":       {"max_file_size": 1024},
-		"skill":      {"root": dir},
+		"bash": {
+			"allowlist": []any{"ls"}, "timeout": "5s", "working_dir": dir,
+			"env": map[string]any{"A": "1"}, "env_allowlist": []any{"PATH"}, "background_timeout": "1m",
+		},
+		"file_read":       {"working_dir": dir, "read_only_roots": []any{dir}, "max_output_chars": 100},
+		"file_write":      {"working_dir": dir, "no_overwrite": true},
+		"file_edit":       nil,
+		"file_multi_edit": {"working_dir": dir},
+		"glob":            {"max_results": 10, "no_ignore": true},
+		"grep":            {"max_file_size": 1024},
+		"skill":           {"roots": []any{dir, t.TempDir()}},
+		"web_fetch":       {"allowed_hosts": []any{"*.go.dev"}, "timeout": "5s", "max_bytes": 1 << 20},
 	} {
 		tool := spec.Tool{Type: typ, Options: opts}
 
@@ -59,30 +65,75 @@ func TestToolOptionsAreStrict(t *testing.T) {
 		{Type: "bash", Options: map[string]any{"allowlst": []any{"ls"}}},
 		{Type: "bash", Options: map[string]any{"timeout": "soon"}},
 		{Type: "file_read", Options: map[string]any{"no_overwrite": true}},
+		{Type: "bash", Options: map[string]any{"sandbox": map[string]any{"type": "bubblewrap", "net": true}}},
+		{Type: "web_fetch", Options: map[string]any{"allowed": []any{"x"}}},
 	} {
 		if err := r.ValidateTool(tool); !errors.Is(err, registry.ErrOptions) {
 			t.Errorf("%+v: err = %v", tool, err)
 		}
 	}
 
-	if _, err := r.BuildTool(context.Background(), "kv", spec.Tool{Type: "kv", Options: map[string]any{"bucket": "b"}},
-		registry.Env{}); !errors.Is(err, registry.ErrOptions) {
-		t.Errorf("kv without a connection: err = %v", err)
+	for _, tool := range []spec.Tool{
+		{Type: "kv", Options: map[string]any{"bucket": "b"}},
+		{Type: "skill"},
+		{Type: "bash", Options: map[string]any{"sandbox": map[string]any{"type": "docker", "workspace": "/w"}}},
+		{Type: "bash", Options: map[string]any{"sandbox": map[string]any{"type": "bubblewrap"}}},
+	} {
+		if _, err := r.BuildTool(context.Background(), "t", tool, registry.Env{}); !errors.Is(err, registry.ErrOptions) {
+			t.Errorf("%+v: err = %v", tool, err)
+		}
+	}
+}
+
+// TestBashSandbox checks a sandboxed bash tool builds where bubblewrap is
+// installed, and fails with phero's error where it is not.
+func TestBashSandbox(t *testing.T) {
+	tool := spec.Tool{Type: "bash", Options: map[string]any{
+		"working_dir": t.TempDir(),
+		"sandbox":     map[string]any{"type": "bubblewrap", "read_only": []any{t.TempDir()}},
+	}}
+
+	var cleanups int
+
+	env := registry.Env{Defer: func(func() error) { cleanups++ }}
+
+	_, err := registry.New().BuildTool(context.Background(), "sh", tool, env)
+
+	switch {
+	case errors.Is(err, bash.ErrBubblewrapNotFound):
+		t.Skip("bubblewrap is not installed")
+	case err != nil:
+		t.Fatal(err)
+	case cleanups != 1:
+		t.Fatalf("cleanups = %d, want the tool's Close", cleanups)
 	}
 }
 
 func TestModels(t *testing.T) {
 	r := registry.New()
 	temp := 0.2
+	lax := false
 
 	for _, m := range []spec.Model{
-		{Provider: "openai", Model: "gpt-4o-mini", APIKey: "k", Temperature: &temp},
-		{Provider: "anthropic", MaxTokens: 1000},
+		{Provider: "openai", Model: "gpt-4o-mini", APIKey: "k", Temperature: &temp, StrictTools: &lax},
+		{Provider: "anthropic", MaxTokens: 1000, StrictTools: &lax, PromptCacheTTL: "1h"},
 		{Provider: "google", Model: "gemini-3.5-flash", APIKey: "k", MaxTokens: 1000, Temperature: &temp},
-		{Provider: "ollama", Model: "llama3"},
+		{Provider: "ollama", Model: "llama3", StrictTools: &lax},
 	} {
 		if _, err := r.BuildModel("m", m); err != nil {
 			t.Errorf("%s: %v", m.Provider, err)
+		}
+	}
+
+	// Each provider rejects the settings it cannot honour.
+	for _, m := range []spec.Model{
+		{Provider: "openai", PromptCacheTTL: "5m"},
+		{Provider: "ollama", Model: "x", PromptCacheTTL: "5m"},
+		{Provider: "google", StrictTools: &lax},
+		{Provider: "google", PromptCacheTTL: "5m"},
+	} {
+		if _, err := r.BuildModel("m", m); !errors.Is(err, registry.ErrOptions) {
+			t.Errorf("%s %+v: err = %v", m.Provider, m, err)
 		}
 	}
 
