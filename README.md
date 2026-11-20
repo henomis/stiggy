@@ -104,14 +104,22 @@ stored in the project or the fleet.
 `stiggy-dashboard` shows what your deployments are doing, across every
 namespace on the NATS account. Each namespace gets a band with its running,
 waiting, completed and failed executions, what started in the last day, and
-what it cost. Each execution is drawn as a trail through its flow: the steps
-it walked, the step working now, and the steps waiting for a human. Its page
-shows tokens and cost by agent and by model, budgets, a timeline of every
-attempt, and the agents' words and tool calls as they stream. Steps waiting
-for a human can be answered, approved or sent back from the page, and
-executions can be cancelled (`-read-only` turns this off). It takes the same
-`-server` and `-creds` as `stiggy`; the designer is a separate tool and never
-connects to NATS.
+what it cost; every execution in a list shows what it was started with.
+
+Each execution is drawn as a trail through its flow: the steps it walked,
+the step working now, and the steps waiting for a human. Below it, the
+execution's story reads top to bottom: every agent's answer, what was put
+to a human and the reply, the route each agent chose, retries, and how it
+ended. Click a step to see how it is set up and narrow the story to it; drag
+the slider under the trail to replay the execution one moment at a time.
+The page also shows tokens and cost by agent and by model, budgets, a
+timeline of every attempt, the flow's shared state, and the agents' words
+and tool calls as they stream.
+
+Steps waiting for a human can be answered, approved or sent back from the
+page, and executions can be cancelled (`-read-only` turns this off). It takes
+the same `-server` and `-creds` as `stiggy`; the designer is a separate tool
+and never connects to NATS.
 
 ```bash
 stiggy-dashboard                                # http://127.0.0.1:7358

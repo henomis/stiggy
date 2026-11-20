@@ -70,7 +70,7 @@
 </aside>
 <main id="content">
 <h1 class="title">Guide</h1>
-<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.2.0 and packtrail v1.0.3.</p>
+<p class="tagline">Everything a fleet file can say, what it compiles to, and how to run it in production. Built on phero v2.3.0 and packtrail v1.0.3.</p>
 <section id="overview"><h2>Overview</h2>
 <p><strong>stiggy</strong> deploys multi-agent architectures on NATS by gluing two libraries: <a href="https://github.com/henomis/phero">phero</a> (agents, LLMs, tools, memory, the NATS Agent Protocol) and <a href="https://github.com/henomis/packtrail">packtrail</a> (a durable, event-sourced workflow engine on JetStream). It adds crews, supervisors, swarms, human review and replay on a substrate that survives crashes and scales out.</p>
 <p>A fleet is defined once, as YAML (the <code>stiggy</code> binary) or in Go (the library), and both build the same model.</p>
@@ -124,7 +124,7 @@ go install github.com/henomis/stiggy/cmd/stiggy-dashboard@latest   # optional
 # from a checkout
 make build        # bin/stiggy, bin/stiggy-design, bin/stiggy-dashboard (static, honors GOOS/GOARCH)
 make test         # all tests with -race
-make check        # test + lint + vet</code></pre><p>The module depends on <code>phero/v2</code> v2.2.0 and <code>packtrail</code> v1.0.3.</p></section>
+make check        # test + lint + vet</code></pre><p>The module depends on <code>phero/v2</code> v2.3.0 and <code>packtrail</code> v1.0.3.</p></section>
 <section id="quickstart"><h2>Quick start</h2>
 <pre><code>nats-server -js &amp;</code></pre><p>Write a fleet:</p><pre><code><span class="c-com"># fleet.yaml</span>
 <span class="c-key">namespace</span>: newsroom
@@ -414,8 +414,12 @@ stiggy run news.yaml               # the generated fleet</code></pre>
 <p><code>stiggy-dashboard</code> shows what your deployments are doing, across every namespace on the NATS account. The page is built into the binary.</p>
 <pre><code>stiggy-dashboard                                   # http://127.0.0.1:7358
 stiggy-dashboard -ns newsroom,support -read-only</code></pre>
-<p>The front page gives each namespace a band: its running, waiting, completed and failed executions, what started in the last day, and what its recent executions cost. Below are the steps waiting for a human, the latest executions, recent failures, spending by agent, and the agents exposed on the bus.</p>
-<p>An execution is drawn as a trail through its flow: the steps it walked, the step working now, the steps waiting for a human and those that failed. Its page shows tokens and cost by agent and by model, budget meters, a timeline of every attempt (retries, and how long a human took to answer), the agents' words, tool calls and task lists as they stream, and its input and output.</p>
+<p>The front page gives each namespace a band: its running, waiting, completed and failed executions, what started in the last day, and what its recent executions cost. Below are the steps waiting for a human, the latest executions, recent failures, spending by agent, and the agents exposed on the bus. Every execution in a list shows what it was started with, in one line, so runs of the same flow can be told apart.</p>
+<p>An execution's page puts the trail of its flow first: the steps it walked, the step working now, the steps waiting for a human and those that failed. Click a step to see its state, visits, time and spending, and how it is set up: its prompt template, the routes it may choose, the channels it writes, its retry policy and timeout.</p>
+<p><strong>What happened</strong> tells the execution top to bottom: what it started with, every agent's answer, what was put to a human and the reply, the route each agent chose, retries with their errors, and how it ended. Clicking a step narrows it to that step; it can also show only the steps or only the exchanges with humans.</p>
+<p>A slider under the trail replays the execution one moment at a time, each moment told in words ("edit finished, chose draft"). The trail, the spending and the shared state redraw as they were, and the story fades what had not happened yet. It reads the same event log as <code>stiggy get -seq</code>.</p>
+<p>The page also shows tokens and cost by agent and by model, budget and <code>max_steps</code> meters, a timeline of every attempt (retries, and how long a human took to answer), the flow's channels, the agents' words, tool calls and task lists as they stream, and the output.</p>
+<p>Everything comes from what packtrail already stores. The prompt as actually sent to the model and the arguments and results of tool calls are not stored: they appear only live, for agents with <code>stream: true</code>, and in traces when <a href="#tracing">tracing</a> is on.</p>
 <p>Steps waiting for a human can be answered, approved or sent back with feedback from the page, and executions can be cancelled. <code>-read-only</code> turns both off.</p>
 <p>Flags: <code>-server</code>, <code>-creds</code>, <code>-log-level</code> and <code>-log-format</code> as for <code>stiggy</code>; <code>-addr ADDR</code>; <code>-ns a,b</code> (only these namespaces; default every namespace on the account); <code>-read-only</code>; <code>-ui DIR</code> (serve a page from a directory, for development); <code>-version</code>.</p></section>
 <section id="deploy"><h2>Deployment &amp; roles</h2>
