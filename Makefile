@@ -1,4 +1,4 @@
-.PHONY: all build ui test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
+.PHONY: all build design dashboard web web-check test lint fmt vet clean coverage help license tidy fix check guard examples examples-live e2e e2e-up e2e-down
 
 # Variables
 GO := go
@@ -15,8 +15,11 @@ all: test lint
 ## help: Display this help message
 help:
 	@echo "Available targets:"
-	@echo "  make build       - Build the stiggy binary into bin/ (honors GOOS/GOARCH)"
-	@echo "  make ui          - Build the designer page into ui/dist (needs Node; not part of build)"
+	@echo "  make build       - Build stiggy, stiggy-design and stiggy-dashboard into bin/ (honors GOOS/GOARCH)"
+	@echo "  make design      - Rebuild the designer page embedded in stiggy-design (needs Node)"
+	@echo "  make dashboard   - Rebuild the dashboard page embedded in stiggy-dashboard (needs Node)"
+	@echo "  make web         - Rebuild both pages"
+	@echo "  make web-check   - Rebuild both pages and fail if the committed ones differ"
 	@echo "  make test        - Run all tests"
 	@echo "  make guard       - Run only the no-direct-NATS architecture guard"
 	@echo "  make lint        - Run golangci-lint"
@@ -35,14 +38,34 @@ help:
 	@echo "  make e2e-down    - Stop them"
 	@echo "  make help        - Display this help message"
 
-## build: Build the stiggy binary (static; honors GOOS/GOARCH)
+## build: Build the binaries (static; honors GOOS/GOARCH). The web pages are
+## embedded as committed; `make web` rebuilds them.
+BINARIES := stiggy stiggy-design stiggy-dashboard
 build:
-	@echo "Building $(BIN_DIR)/stiggy..."
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN_DIR)/stiggy ./cmd/stiggy
+	@for b in $(BINARIES); do \
+		echo "Building $(BIN_DIR)/$$b..."; \
+		CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN_DIR)/$$b ./cmd/$$b || exit 1; \
+	done
 
-## ui: Build the designer page served by `stiggy design -ui ui/dist` (needs Node)
-ui:
-	cd ui && npm ci && npm test && npm run build
+## design: Rebuild the designer page (designer/) into cmd/stiggy-design/web (needs Node)
+design:
+	cd designer && npm ci && npm test && npm run build
+
+## dashboard: Rebuild the dashboard page (dashboard/) into cmd/stiggy-dashboard/web (needs Node)
+dashboard:
+	cd dashboard && npm ci && npm test && npm run build
+
+## web: Rebuild both pages
+web: design dashboard
+
+## web-check: Rebuild both pages and fail if they differ from the committed ones
+WEB_DIRS := cmd/stiggy-design/web cmd/stiggy-dashboard/web
+web-check: web
+	@if [ -n "$$(git status --porcelain -- $(WEB_DIRS))" ]; then \
+		git status --short -- $(WEB_DIRS); \
+		echo "The committed pages are stale: run 'make web' and commit $(WEB_DIRS)"; \
+		exit 1; \
+	fi
 
 ## test: Run all tests (excluding examples)
 test:

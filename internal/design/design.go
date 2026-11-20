@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ type Server struct {
 	activities []string
 	project    string
 	output     string
-	ui         string
+	ui         fs.FS
 }
 
 // Option configures a [Server].
@@ -70,10 +71,10 @@ func WithProject(path, output string) Option {
 	return func(s *Server) { s.project, s.output = path, output }
 }
 
-// WithUI serves the built page from dir. Without it, "/" explains how to
+// WithUI serves the built page from fsys. Without it, "/" explains how to
 // build the page.
-func WithUI(dir string) Option {
-	return func(s *Server) { s.ui = dir }
+func WithUI(fsys fs.FS) Option {
+	return func(s *Server) { s.ui = fsys }
 }
 
 // New returns a server checking fleets against reg.
@@ -95,8 +96,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/project", s.writeProject)
 	mux.HandleFunc("POST /api/compile", s.compileProject)
 
-	if s.ui != "" {
-		mux.Handle("GET /", http.FileServerFS(os.DirFS(s.ui)))
+	if s.ui != nil {
+		mux.Handle("GET /", http.FileServerFS(s.ui))
 	} else {
 		mux.HandleFunc("GET /{$}", placeholder)
 	}
@@ -371,11 +372,10 @@ const placeholderPage = `<!doctype html>
 <title>stiggy design</title>
 <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem">
 <h1>stiggy design</h1>
-<p>The designer's API is running, but no page was given. Build the page and
-pass its directory:</p>
-<pre>make ui
-stiggy design -ui ui/dist my.stiggy.json</pre>
-<p>or set <code>STIGGY_UI</code> to that directory.</p>
+<p>The designer's API is running, but this server was built without its
+page. Build it into the binary:</p>
+<pre>make design
+bin/stiggy-design my.stiggy.json</pre>
 `
 
 func placeholder(w http.ResponseWriter, _ *http.Request) {

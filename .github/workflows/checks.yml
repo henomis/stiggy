@@ -57,3 +57,18 @@ jobs:
 
       - name: Vet
         run: make vet
+
+  # The binaries embed the built pages, committed under cmd/*/web: rebuild
+  # them from designer/ and dashboard/ and fail if the committed ones are stale.
+  web:
+    name: web pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Rebuild and compare
+        run: make web-check

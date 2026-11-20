@@ -26,6 +26,9 @@ model:
 ```bash
 nats-server -js &
 go install github.com/henomis/stiggy/cmd/stiggy@latest
+# optional, the browser tools:
+go install github.com/henomis/stiggy/cmd/stiggy-design@latest
+go install github.com/henomis/stiggy/cmd/stiggy-dashboard@latest
 ```
 
 ```yaml
@@ -79,7 +82,7 @@ watch and stream progress from it.
 
 ## Designer
 
-`stiggy design` builds workflows in the browser from blocks: Start, AI Agent,
+`stiggy-design` builds workflows in the browser from blocks: Start, AI Agent,
 AI Router, Loop over items, Condition, Parallel and Merge, Human approval,
 Run workflow, Agent team, Output, and the tools and knowledge bases an agent
 can use. Drag blocks onto the canvas, connect them, and insert values from
@@ -88,14 +91,43 @@ every save also writes the fleet it compiles to, checked by the same loader
 and compiler as `stiggy validate`. The designer never touches NATS.
 
 ```bash
-make ui                                        # build the page (needs Node)
-stiggy design -ui ui/dist news.stiggy.json     # http://127.0.0.1:7357
-stiggy run news.yaml                           # the generated fleet
+stiggy-design news.stiggy.json     # http://127.0.0.1:7357
+stiggy run news.yaml               # the generated fleet
 ```
 
 Model providers (top bar, **Providers**) name a service such as OpenAI or
 Ollama and the environment variable that holds its API key; keys are never
 stored in the project or the fleet.
+
+## Dashboard
+
+`stiggy-dashboard` shows what your deployments are doing, across every
+namespace on the NATS account. Each namespace gets a band with its running,
+waiting, completed and failed executions, what started in the last day, and
+what it cost; every execution in a list shows what it was started with.
+
+Each execution is drawn as a trail through its flow: the steps it walked,
+the step working now, and the steps waiting for a human. Below it, the
+execution's story reads top to bottom: every agent's answer, what was put
+to a human and the reply, the route each agent chose, retries, and how it
+ended. Click a step to see how it is set up and narrow the story to it; drag
+the slider under the trail to replay the execution one moment at a time.
+The page also shows tokens and cost by agent and by model, budgets, a
+timeline of every attempt, the flow's shared state, and the agents' words
+and tool calls as they stream.
+
+Steps waiting for a human can be answered, approved or sent back from the
+page, and executions can be cancelled (`-read-only` turns this off). It takes
+the same `-server` and `-creds` as `stiggy`; the designer is a separate tool
+and never connects to NATS.
+
+```bash
+stiggy-dashboard                                # http://127.0.0.1:7358
+stiggy-dashboard -ns newsroom,support -read-only
+```
+
+Both tools carry their page inside the binary, so nothing else is needed to
+run them.
 
 ## How it works
 
@@ -213,11 +245,20 @@ make check          # test + lint + vet
 make examples       # the examples, scripted (needs nats-server -js)
 make examples-live  # the examples, against gemma4:cloud
 make e2e            # end-to-end scenarios against a real model and Qdrant
-make ui             # the designer page (Node), into ui/dist
+make build          # stiggy, stiggy-design and stiggy-dashboard, into bin/
+make web            # rebuild the embedded pages from designer/ and dashboard/ (Node)
+make web-check      # fail if the committed pages are stale (CI runs it)
 ```
 
-For work on the designer, run `stiggy design my.stiggy.json` and, in `ui/`,
-`npm run dev`: Vite serves the page with live reload and proxies `/api` to it.
+The pages are built into `cmd/stiggy-design/web` and
+`cmd/stiggy-dashboard/web` and committed, so `go install` gives working
+tools. After changing `designer/` or `dashboard/`, run `make web` and commit the
+result.
+
+For work on a page, run its tool (`stiggy-design my.stiggy.json` or
+`stiggy-dashboard`) and, in `designer/` or `dashboard/`, `npm run dev`: Vite serves
+the page with live reload and proxies `/api` to the tool. `-ui DIR` makes a
+tool serve a page from a directory instead of its built-in one.
 
 [e2e/](e2e) runs whole fleets against a real model through Ollama
 (`gemma4:cloud` by default, `STIGGY_E2E_MODEL` to change it): map-reduce

@@ -54,7 +54,7 @@ export function App() {
   const wf = project.workflows.find((w) => w.id === wfId) ?? project.workflows[0];
   const block = wf.nodes.find((n) => n.id === selected) ?? null;
 
-  // Start: the catalog and the project file, if stiggy design was given one.
+  // Start: the catalog and the project file, if stiggy-design was given one.
   useEffect(() => {
     api.catalog().then(setCatalog, (e) => setNotice(`catalog: ${e.message}`));
     api.readProject().then(

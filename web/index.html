@@ -184,8 +184,19 @@ stiggy run -role workers -only researcher,writer fleet.yaml    <span class="c-co
   <div class="wrap two">
     <h2 id="designer-h">Or draw it</h2>
     <div class="prose">
-      <p><code>stiggy design</code> opens a canvas in your browser. Connect blocks for agents, routers, loops, conditions, parallel branches, human approval and agent teams, and every save writes a fleet file checked by the same compiler as <code>stiggy validate</code>.</p>
+      <p><code>stiggy-design</code> opens a canvas in your browser. Connect blocks for agents, routers, loops, conditions, parallel branches, human approval and agent teams, and every save writes a fleet file checked by the same compiler as <code>stiggy validate</code>.</p>
       <p><a href="guide.html#designer">How the designer maps to a fleet</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="band watch" aria-labelledby="watch-h">
+  <div class="wrap two">
+    <h2 id="watch-h">Then watch it run</h2>
+    <div class="prose">
+      <p><code>stiggy-dashboard</code> shows every namespace on your NATS account in the browser. Each execution is drawn as a trail through its flow, and its story reads top to bottom: every agent's answer, every question put to a person and the reply, every route an agent chose.</p>
+      <p>Replay an execution one moment at a time, see what each agent and model spent, and answer the steps waiting for you from the page.</p>
+      <p><a href="guide.html#dashboard">What the dashboard shows</a></p>
     </div>
   </div>
 </section>

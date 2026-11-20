@@ -35,6 +35,7 @@ REVIEW-BACKLOG.md
 UPSTREAM-REQUIREMENTS.md
 CLAUDE.md
 
-# Designer page: built separately (cd ui && npm ci && npm run build)
-ui/node_modules/
-ui/dist/
+# Web pages: their sources' dependencies. The built pages are committed under
+# cmd/stiggy-design/web and cmd/stiggy-dashboard/web (make web).
+designer/node_modules/
+dashboard/node_modules/
