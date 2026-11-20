@@ -114,7 +114,9 @@ ended. Click a step to see how it is set up and narrow the story to it; drag
 the slider under the trail to replay the execution one moment at a time.
 The page also shows tokens and cost by agent and by model, budgets, a
 timeline of every attempt, the flow's shared state, and the agents' words
-and tool calls as they stream.
+and tool calls as they stream. For agents with `record: prompt` or
+`record: full`, each attempt also shows the prompt sent to the model, each
+model call, and with `full` the tool calls and delegates' runs.
 
 Steps waiting for a human can be answered, approved or sent back from the
 page, and executions can be cancelled (`-read-only` turns this off). It takes

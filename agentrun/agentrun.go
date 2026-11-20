@@ -101,7 +101,7 @@ func WithLogger(l *slog.Logger) Option {
 }
 
 // WithTracing sets the provider of the runs' spans. It should include
-// NewLogProcessor, or the debug lines are lost. Without it, spans are only
+// NewLogProcessor, or the debug lines and attempt records are lost. Without it, spans are only
 // logged.
 func WithTracing(p *trace.Provider) Option {
 	return func(r *runner) { r.tracing = p }
@@ -163,6 +163,8 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 	ctx = stepContext(ctx, r.tracing, job, r.a.Name)
 	ctx, span := trace.Start(ctx, spanStep+" "+job.Node, &trace.Custom{Type: spanStep, Data: stepData(job)})
 	obs := observe(ctx, span)
+	rec := newRecorder(r.a.Spec, span.Context().SpanID)
+	ctx = withRecorder(ctx, rec)
 
 	if job.Traceparent == "" {
 		obs.rep.Add(slog.String(trace.LogKeyTraceID, span.Context().TraceID.String()))
@@ -172,6 +174,7 @@ func (r *runner) handle(ctx context.Context, job *worker.Job) (*worker.Result, e
 
 	res, err := r.attempt(ctx, job, step, schema, h, obs)
 	span.End(endErr(err))
+	rec.write(job, err, schema)
 
 	return res, err
 }

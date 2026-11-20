@@ -5,9 +5,13 @@ import { useState } from "react";
 
 import type * as api from "./api";
 import { Fields, Prose } from "./Bits";
+import { RecordToggle } from "./Record";
 import { clock, duration, money, plural, tokens } from "./format";
 
 interface Props {
+  /** The execution, for fetching attempt records. */
+  ns: string;
+  id: string;
   story: api.Entry[];
   /** While replaying, entries after this time have not happened yet. */
   until?: number;
@@ -20,7 +24,7 @@ interface Props {
 
 type Filter = "all" | "agents" | "humans";
 
-export function Story({ story, until, selected, focus, onSelect, onClearFocus }: Props) {
+export function Story({ ns, id, story, until, selected, focus, onSelect, onClearFocus }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const shown = story.filter(
     (e) =>
@@ -51,7 +55,9 @@ export function Story({ story, until, selected, focus, onSelect, onClearFocus }:
       <ol className="story-list">
         {shown.map((e, i) => (
           <StoryEntry
-            key={i}
+            key={entryKey(e, i)}
+            ns={ns}
+            id={id}
             e={e}
             future={until !== undefined && Date.parse(e.end ?? e.time) > until}
             selected={!!e.node && e.node === selected}
@@ -63,7 +69,31 @@ export function Story({ story, until, selected, focus, onSelect, onClearFocus }:
   );
 }
 
-function StoryEntry({ e, future, selected, onSelect }: { e: api.Entry; future: boolean; selected: boolean; onSelect: (n: string) => void }) {
+/**
+ * A key that follows an entry when the list is filtered, so the state of
+ * an entry (an open record) stays with it. Entries of one attempt differ by
+ * kind and time; the index only breaks ties among events of one instant.
+ */
+export function entryKey(e: api.Entry, i: number): string {
+  if (e.kind === "step") return ["step", e.key ?? e.node, e.generation, e.attempt, e.outcome, e.end ?? e.time].join("|");
+  return [e.kind, e.node, e.time, e.text, i].join("|");
+}
+
+function StoryEntry({
+  ns,
+  id,
+  e,
+  future,
+  selected,
+  onSelect,
+}: {
+  ns: string;
+  id: string;
+  e: api.Entry;
+  future: boolean;
+  selected: boolean;
+  onSelect: (n: string) => void;
+}) {
   const cls = `entry k-${e.kind} o-${e.outcome ?? "none"}${e.asks ? " asks" : ""}${future ? " future" : ""}${selected ? " selected" : ""}`;
   const node = e.node ? (
     <button type="button" className="link node-link" onClick={() => onSelect(e.node!)}>
@@ -119,7 +149,7 @@ function StoryEntry({ e, future, selected, onSelect }: { e: api.Entry; future: b
         </li>
       );
     default:
-      return <StepEntry e={e} cls={cls} node={node} />;
+      return <StepEntry ns={ns} id={id} e={e} cls={cls} node={node} />;
   }
 }
 
@@ -133,7 +163,7 @@ const OUTCOME: Record<string, string> = {
   running: "is working",
 };
 
-function StepEntry({ e, cls, node }: { e: api.Entry; cls: string; node: React.ReactNode }) {
+function StepEntry({ ns, id, e, cls, node }: { ns: string; id: string; e: api.Entry; cls: string; node: React.ReactNode }) {
   const took = e.end ? Date.parse(e.end) - Date.parse(e.time) : 0;
   const u = e.usage;
   const facts: string[] = [];
@@ -172,6 +202,13 @@ function StepEntry({ e, cls, node }: { e: api.Entry; cls: string; node: React.Re
         <p className="entry-route">
           sent the work to <span className="route-chip">{e.next}</span>
         </p>
+      )}
+      {e.recorded && e.node && e.key && e.generation && e.attempt && (
+        <RecordToggle
+          key={`${e.key}|${e.generation}|${e.attempt}`}
+          ns={ns}
+          id={id}
+          at={{ node: e.node, key: e.key, generation: e.generation, attempt: e.attempt }} />
       )}
     </li>
   );

@@ -59,6 +59,16 @@ func (c *compiler) agents() {
 			c.errorf(path+".max_parallel_tools", "must not be negative")
 		}
 
+		switch a.Record {
+		case "", spec.RecordOff, spec.RecordPrompt, spec.RecordFull:
+		default:
+			c.errorf(path+".record", "must be %s, %s or %s", spec.RecordOff, spec.RecordPrompt, spec.RecordFull)
+		}
+
+		if a.RecordMaxBytes < 0 {
+			c.errorf(path+".record_max_bytes", "must be positive")
+		}
+
 		c.compaction(path+".compaction", a.Compaction)
 		c.permissions(path+".permissions", a.Permissions)
 		c.memory(path+".memory", a.Memory)

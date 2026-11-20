@@ -54,6 +54,13 @@ type Entry struct {
 	Visit   int    `json:"visit,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// Key and Generation, with Attempt, identify a step's attempt, as its
+	// record is looked up (the records endpoint).
+	Key        string `json:"key,omitempty"`
+	Generation int    `json:"generation,omitempty"`
+	// Recorded is set when the attempt stored a record of what it did (an
+	// agent's record setting); the record itself is fetched apart.
+	Recorded bool `json:"recorded,omitempty"`
 
 	// Text is what a step put to a human (Asks: question or review), a
 	// human's reply, or an event in words.
@@ -127,7 +134,7 @@ func (s *storyteller) add(ev event.Event) {
 		s.done(ev.Time, d)
 	case *event.NodeFail:
 		e := s.step(d.Key, d.Node, d.Generation, d.Attempt, ev.Time)
-		e.Outcome, e.Error, e.Usage = SpanFailed, d.Error, usageOrNil(d.Usage)
+		e.Outcome, e.Error, e.Usage, e.Recorded = SpanFailed, d.Error, usageOrNil(d.Usage), len(d.Record) > 0
 
 		if d.WillRetry {
 			e.Outcome = SpanRetry
@@ -160,7 +167,7 @@ func (s *storyteller) step(key, node string, gen, attempt int, end time.Time) En
 	return Entry{
 		Kind: EntryStep, Time: s.started[id], End: end, Node: node,
 		Who: s.who[node][0], Role: s.who[node][1],
-		Visit: s.gens[key+"#"+strconv.Itoa(gen)], Attempt: attempt,
+		Visit: s.gens[key+"#"+strconv.Itoa(gen)], Attempt: attempt, Key: key, Generation: gen,
 	}
 }
 
@@ -190,6 +197,7 @@ func (s *storyteller) scheduled(at time.Time, d *event.Scheduled) {
 func (s *storyteller) done(at time.Time, d *event.NodeDone) {
 	e := s.step(d.Key, d.Node, d.Generation, d.Attempt, at)
 	e.Outcome, e.Next, e.Output, e.Usage = SpanDone, d.Next, FieldsOf(d.Output), usageOrNil(d.Usage)
+	e.Recorded = len(d.Record) > 0
 
 	if d.Cached {
 		e.Outcome = SpanCached
@@ -220,6 +228,7 @@ func (s *storyteller) interrupted(at time.Time, d *event.Interrupted) {
 	}
 
 	e.Outcome, e.Usage, e.Asks = SpanWaiting, usageOrNil(d.Usage), waitQuestion
+	e.Recorded = len(d.Record) > 0
 
 	var in interrupt
 	if len(d.Payload) > 0 && json.Unmarshal(d.Payload, &in) == nil {

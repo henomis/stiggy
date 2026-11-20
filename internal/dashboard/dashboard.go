@@ -59,6 +59,7 @@ type Server struct {
 	ui       fs.FS
 	readOnly bool
 	logger   *slog.Logger
+	traceURL string
 
 	mu      sync.Mutex
 	clients map[string]*packtrail.Client
@@ -88,6 +89,13 @@ func WithReadOnly() Option {
 	return func(s *Server) { s.readOnly = true }
 }
 
+// WithTraceURL links each attempt record to its trace: tmpl is a URL of the
+// tracing backend with {trace_id} where the trace id goes, such as
+// "http://localhost:16686/trace/{trace_id}".
+func WithTraceURL(tmpl string) Option {
+	return func(s *Server) { s.traceURL = tmpl }
+}
+
 // WithLogger sets the logger of the packtrail clients.
 func WithLogger(l *slog.Logger) Option {
 	return func(s *Server) { s.logger = l }
@@ -114,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}", s.execution)
 	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/history", s.history)
 	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/progress", s.progress)
+	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/records", s.records)
 	mux.HandleFunc("POST /api/ns/{ns}/executions/{id}/resume", s.resume)
 	mux.HandleFunc("POST /api/ns/{ns}/executions/{id}/cancel", s.cancel)
 	mux.HandleFunc("GET /api/ns/{ns}/flows/{flow}", s.flowGraph)

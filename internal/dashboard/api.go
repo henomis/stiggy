@@ -805,7 +805,7 @@ func httpError(w http.ResponseWriter, err error) {
 		code = http.StatusGatewayTimeout
 	}
 
-	writeStatus(w, code, map[string]string{"error": err.Error()})
+	writeMessage(w, code, err.Error())
 }
 
 // cleanPath is a request path made safe to join to a directory.

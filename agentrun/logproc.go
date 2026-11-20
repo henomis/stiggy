@@ -45,9 +45,12 @@ func withLogger(ctx context.Context, l *slog.Logger) context.Context {
 // logProcessor is a trace.Processor that logs each model call, tool call,
 // memory access and agent run at debug level, with the agent that made it,
 // through the logger of the step or request the span belongs to.
+// It also hands the spans of a step that records its attempts (an agent's
+// record setting) to the step's recorder.
 type logProcessor struct {
-	mu      sync.Mutex
-	loggers map[trace.SpanID]logged
+	mu        sync.Mutex
+	loggers   map[trace.SpanID]logged
+	recorders map[trace.SpanID]*recorder
 }
 
 type logged struct {
@@ -56,11 +59,12 @@ type logged struct {
 }
 
 // NewLogProcessor returns the processor that writes stiggy's debug lines
-// ("stiggy: llm request", "stiggy: tool result", …). A provider given to
-// WithTracing should include it, first; spans started outside a stiggy step
-// or exposed agent are not logged.
+// ("stiggy: llm request", "stiggy: tool result", …) and collects the spans
+// of attempt records. A provider given to WithTracing should include it,
+// first; spans started outside a stiggy step or exposed agent are not
+// logged.
 func NewLogProcessor() trace.Processor {
-	return &logProcessor{loggers: map[trace.SpanID]logged{}}
+	return &logProcessor{loggers: map[trace.SpanID]logged{}, recorders: map[trace.SpanID]*recorder{}}
 }
 
 // defaultProvider is the provider of a handler given none: it only logs.
@@ -70,6 +74,12 @@ func defaultProvider() *trace.Provider {
 
 // OnStart implements trace.Processor.
 func (p *logProcessor) OnStart(ctx context.Context, s *trace.SpanData) {
+	if r := recorderFrom(ctx); r != nil {
+		p.mu.Lock()
+		p.recorders[s.Context.SpanID] = r
+		p.mu.Unlock()
+	}
+
 	l, _ := ctx.Value(loggerKey{}).(*slog.Logger)
 	if l == nil || !l.Enabled(ctx, slog.LevelDebug) {
 		return
@@ -102,7 +112,13 @@ func (p *logProcessor) OnEnd(s *trace.SpanData) {
 	p.mu.Lock()
 	lg, ok := p.loggers[s.Context.SpanID]
 	delete(p.loggers, s.Context.SpanID)
+	r := p.recorders[s.Context.SpanID]
+	delete(p.recorders, s.Context.SpanID)
 	p.mu.Unlock()
+
+	if r != nil {
+		r.add(s)
+	}
 
 	if !ok {
 		return

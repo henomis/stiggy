@@ -151,6 +151,8 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
       {h && h.story.length > 0 && (
         <Section title="What happened" aside={<span className="muted small">{plural(h.story.length, "entry", "entries")}</span>}>
           <Story
+            ns={ns}
+            id={id}
             story={h.story}
             until={seq !== undefined ? Date.parse(h.moments.find((m) => m.seq === seq)?.time ?? live.updated) : undefined}
             selected={node}
