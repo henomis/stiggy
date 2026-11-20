@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -165,12 +166,25 @@ func TestDashboard(t *testing.T) {
 
 	waitFor(t, h, id, func(st *packtrail.State) bool { return st.Status == packtrail.StatusCompleted })
 
-	var tl dashboard.Timeline
-	if code := call(t, srv, http.MethodGet, "/api/ns/newsroom/executions/"+id+"/timeline", "", &tl); code != http.StatusOK {
-		t.Fatalf("timeline: %d", code)
+	var hist dashboard.History
+	if code := call(t, srv, http.MethodGet, "/api/ns/newsroom/executions/"+id+"/history", "", &hist); code != http.StatusOK {
+		t.Fatalf("history: %d", code)
 	}
 
-	assertHumanSpan(t, tl)
+	assertHumanSpan(t, hist.Timeline)
+	assertHistory(t, hist)
+
+	// Time travel: right after the first moment, research has not finished.
+	var then dashboard.Execution
+
+	path := "/api/ns/newsroom/executions/" + id + "?seq=" + strconv.FormatUint(hist.Moments[0].Seq, 10)
+	if code := call(t, srv, http.MethodGet, path, "", &then); code != http.StatusOK {
+		t.Fatalf("execution at seq: %d", code)
+	}
+
+	if then.Status != "running" || then.Nodes["research"].State == dashboard.StateDone || then.Seq == 0 {
+		t.Fatalf("at %d: status %s, nodes %+v", then.Seq, then.Status, then.Nodes)
+	}
 
 	var list struct{ Executions []dashboard.Summary }
 	if code := call(t, srv, http.MethodGet, "/api/ns/newsroom/executions?status=completed", "", &list); code != http.StatusOK ||
@@ -192,6 +206,83 @@ func assertHumanSpan(t *testing.T, tl dashboard.Timeline) {
 
 	if human == nil || human.Node != "write" || human.By != "editor" || human.End.IsZero() || tl.End.IsZero() {
 		t.Fatalf("timeline = %+v", tl)
+	}
+}
+
+func assertHistory(t *testing.T, hist dashboard.History) {
+	t.Helper()
+
+	research := hist.Steps["research"]
+	if research == nil || research.Config == nil || research.Config.Prompt != "" || len(research.Runs) != 1 {
+		t.Fatalf("research = %+v", research)
+	}
+
+	run := research.Runs[0]
+	if run.Outcome != dashboard.SpanDone || run.Usage == nil || run.Usage.TokensIn == 0 ||
+		len(run.Output) != 1 || !strings.HasPrefix(run.Output[0].Text, "notes on") {
+		t.Fatalf("research run = %+v", run)
+	}
+
+	// write paused for the review, then ran again once approved: one visit.
+	write := hist.Steps["write"]
+	if write == nil || len(write.Runs) != 2 || write.Runs[0].Outcome != dashboard.SpanWaiting ||
+		write.Runs[1].Visit != 1 || write.Runs[1].ResumedBy != "editor" {
+		t.Fatalf("write = %+v", write)
+	}
+
+	if len(hist.Conversation) != 1 {
+		t.Fatalf("conversation = %+v", hist.Conversation)
+	}
+
+	x := hist.Conversation[0]
+	if x.Node != "write" || x.Kind != "review" || !x.Approved || x.By != "editor" || x.RepliedAt.IsZero() {
+		t.Fatalf("exchange = %+v", x)
+	}
+
+	if len(hist.Moments) < 4 || hist.Moments[0].Text != "started; research started" {
+		t.Fatalf("moments = %+v", hist.Moments)
+	}
+
+	assertStory(t, hist.Story)
+}
+
+// assertStory checks the execution reads in order: start, research's
+// answer, the draft put up for review, the approval, the kept draft, end.
+func assertStory(t *testing.T, story []dashboard.Entry) {
+	t.Helper()
+
+	type line struct{ kind, node, who, outcome string }
+
+	want := []line{
+		{dashboard.EntryStart, "", "", ""},
+		{dashboard.EntryStep, "research", "researcher", dashboard.SpanDone},
+		{dashboard.EntryStep, "write", "writer", dashboard.SpanWaiting},
+		{dashboard.EntryHuman, "write", "editor", ""},
+		{dashboard.EntryStep, "write", "writer", dashboard.SpanDone},
+		{dashboard.EntryEnd, "", "", dashboard.SpanDone},
+	}
+
+	if len(story) != len(want) {
+		t.Fatalf("story has %d entries, want %d: %+v", len(story), len(want), story)
+	}
+
+	for i, w := range want {
+		e := story[i]
+		if e.Kind != w.kind || e.Node != w.node || e.Who != w.who || e.Outcome != w.outcome {
+			t.Errorf("entry %d = %s %s %s %s, want %+v", i, e.Kind, e.Node, e.Who, e.Outcome, w)
+		}
+	}
+
+	if story[0].Output[0].Text != "ants" || !strings.HasPrefix(story[1].Output[0].Text, "notes on") {
+		t.Errorf("start or research output: %+v %+v", story[0].Output, story[1].Output)
+	}
+
+	if story[2].Asks != "review" || !strings.HasPrefix(story[2].Text, "notes on") || story[2].Visit != 1 {
+		t.Errorf("review entry = %+v", story[2])
+	}
+
+	if !story[3].Approved || !story[4].Kept || story[4].Visit != 1 || story[4].Output != nil {
+		t.Errorf("approval and kept answer = %+v / %+v", story[3], story[4])
 	}
 }
 

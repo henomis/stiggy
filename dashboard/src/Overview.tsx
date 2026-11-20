@@ -267,6 +267,11 @@ export function RunRow({ s, showNs }: { s: api.Summary; showNs: boolean }) {
       <a href={href.execution(s.namespace, s.exec_id)}>
         <span className="run-flow">
           <span className="run-name">{s.flow}</span>
+          {s.input && (
+            <span className="run-input" title={s.input}>
+              {s.input}
+            </span>
+          )}
           <span className="muted small">
             {showNs ? `${s.namespace}, ` : ""}
             <span className="mono">{shortId(s.exec_id)}</span>

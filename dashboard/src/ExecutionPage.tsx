@@ -5,24 +5,37 @@ import { useState } from "react";
 
 import * as api from "./api";
 import { Fields, Meter, Prose, Section, ShareBars, StatusMark } from "./Bits";
-import { ago, duration, money, plural, tokens } from "./format";
+import { ago, duration, money, plural, preview, tokens } from "./format";
 import { href, useNow, usePoll } from "./hooks";
 import { LiveSteps } from "./LiveSteps";
 import { Review } from "./Review";
+import { StepConfig } from "./StepConfig";
+import { Story } from "./Story";
 import { Timeline } from "./Timeline";
+import { TimeTravel } from "./TimeTravel";
 import { Trail } from "./Trail";
 
 const OPEN = new Set(["running", "waiting"]);
 
 export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; readOnly: boolean }) {
   const ex = usePoll(() => api.execution(ns, id), 2500, [ns, id]);
-  const tl = usePoll(() => api.timeline(ns, id), 2500, [ns, id]);
+  const hist = usePoll(() => api.history(ns, id), 2500, [ns, id]);
   const now = useNow();
   const [selected, setSelected] = useState<string>();
+  const [showInput, setShowInput] = useState(false);
+  // focus narrows the story to one step; set by clicking a step.
+  const [focus, setFocus] = useState<string>();
+  const pick = (n: string) => {
+    setSelected(n);
+    setFocus(n);
+  };
+  // seq is the moment being replayed; undefined: now.
+  const [seq, setSeq] = useState<number>();
+  const past = usePoll(() => (seq ? api.execution(ns, id, seq) : Promise.resolve(undefined)), 60_000, [ns, id, seq]);
 
   const refresh = () => {
     ex.refresh();
-    tl.refresh();
+    hist.refresh();
   };
 
   if (ex.error && !ex.data) {
@@ -37,12 +50,15 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
     );
   }
 
-  const e = ex.data;
-  if (!e) return <p className="muted pad">Loading the execution…</p>;
+  const live = ex.data;
+  if (!live) return <p className="muted pad">Loading the execution…</p>;
 
-  const open = OPEN.has(e.status);
-  const ran = (open ? now : Date.parse(e.updated)) - Date.parse(e.created);
-  const node = selected ?? e.waits[0]?.node ?? e.failed_node;
+  // While replaying, the trail, state and spending are those of the moment.
+  const e = (seq !== undefined && past.data) || live;
+  const open = OPEN.has(live.status);
+  const ran = (open ? now : Date.parse(live.updated)) - Date.parse(live.created);
+  const node = selected ?? live.waits[0]?.node ?? live.failed_node ?? live.last_node;
+  const h = hist.data;
 
   return (
     <>
@@ -50,13 +66,34 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
       <header className="exec-head">
         <div>
           <h1 className="page-title">
-            {e.flow} <StatusMark status={e.status} />
+            {live.flow} <StatusMark status={live.status} />
           </h1>
+          {live.input.length > 0 && (
+            <div className="exec-input">
+              <p>
+                <span className="exec-input-label">Started with</span>{" "}
+                <button
+                  type="button"
+                  className="exec-input-value"
+                  aria-expanded={showInput}
+                  title={showInput ? "Hide the whole input" : "Show the whole input"}
+                  onClick={() => setShowInput(!showInput)}
+                >
+                  {preview(live.input)}
+                </button>
+              </p>
+              {showInput && (
+                <div className="exec-input-all">
+                  <Fields fields={live.input} empty="" />
+                </div>
+              )}
+            </div>
+          )}
           <p className="exec-meta">
             <span className="mono">{e.exec_id}</span>
             <span>started {ago(e.created, now)}</span>
             <span>{open ? "running for" : "ran for"} {duration(ran)}</span>
-            <span>{plural(e.steps, "step")}</span>
+            <span>{plural(live.steps, "step")}</span>
             {e.parent && (
               <a href={href.execution(ns, e.parent)}>
                 child of <span className="mono">{e.parent}</span>
@@ -72,37 +109,62 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
         {open && !readOnly && <CancelButton ns={ns} id={id} onDone={refresh} />}
       </header>
 
-      {(e.status === "failed" || e.status === "cancelled") && (e.error || e.reason) && (
-        <div className={`banner b-${e.status}`} role="status">
-          <strong>{e.status === "failed" ? `Failed${e.failed_node ? ` at ${e.failed_node}` : ""}` : "Cancelled"}</strong>
-          <Prose text={[e.reason, e.error].filter(Boolean).join(": ")} lines={4} />
+      {(live.status === "failed" || live.status === "cancelled") && (live.error || live.reason) && (
+        <div className={`banner b-${live.status}`} role="status">
+          <strong>{live.status === "failed" ? `Failed${live.failed_node ? ` at ${live.failed_node}` : ""}` : "Cancelled"}</strong>
+          <Prose text={[live.reason, live.error].filter(Boolean).join(": ")} lines={4} />
         </div>
       )}
 
-      {e.waits.length > 0 && (
-        <Section title={e.waits.length === 1 ? "Waiting for you" : `${e.waits.length} steps wait for you`} className="waiting">
+      {live.waits.length > 0 && (
+        <Section title={live.waits.length === 1 ? "Waiting for you" : `${live.waits.length} steps wait for you`} className="waiting">
           <div className="waits wide">
-            {e.waits.map((w) => (
+            {live.waits.map((w) => (
               <Review key={w.node} ns={ns} id={id} wait={w} readOnly={readOnly} onDone={refresh} />
             ))}
           </div>
         </Section>
       )}
 
-      <div className="trail-stage">
+      <div className={`trail-stage${seq !== undefined ? " replay" : ""}`}>
         <div className="trail-canvas">
           {e.graph ? (
-            <Trail graph={e.graph} nodes={e.nodes} selected={node} onSelect={setSelected} />
+            <Trail graph={e.graph} nodes={e.nodes} selected={node} onSelect={pick} />
           ) : (
             <p className="muted">The flow definition of this execution is not registered any more.</p>
           )}
         </div>
-        <NodeDetail e={e} node={node} tl={tl.data} now={now} />
+        <NodeDetail
+          e={e}
+          node={node}
+          config={node ? h?.steps[node]?.config : undefined}
+          tl={h?.timeline}
+          now={seq !== undefined ? Date.parse(h?.moments.find((m) => m.seq === seq)?.time ?? live.updated) : now}
+        />
+        {h && (
+          <div className="trail-foot">
+            <TimeTravel moments={h.moments} seq={seq} onChange={setSeq} />
+          </div>
+        )}
       </div>
 
+      {h && h.story.length > 0 && (
+        <Section title="What happened" aside={<span className="muted small">{plural(h.story.length, "entry", "entries")}</span>}>
+          <Story
+            story={h.story}
+            until={seq !== undefined ? Date.parse(h.moments.find((m) => m.seq === seq)?.time ?? live.updated) : undefined}
+            selected={node}
+            focus={focus}
+            onSelect={pick}
+            onClearFocus={() => setFocus(undefined)}
+          />
+        </Section>
+      )}
+
+
       <div className="exec-grid">
-        <Section title="Spend">
-          <UsageView u={e.usage} budget={e.budget} />
+        <Section title={seq !== undefined ? "Spend at this moment" : "Spend"}>
+          <UsageView u={e.usage} budget={e.budget} steps={e.steps} maxSteps={e.max_steps} />
         </Section>
         {open || e.status === "running" ? (
           <Section title="Live">
@@ -116,13 +178,15 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
       </div>
 
       <Section title="Timeline">
-        {tl.data ? <Timeline tl={tl.data} now={now} selected={node} onSelect={setSelected} /> : <p className="muted">Loading…</p>}
+        {h ? <Timeline tl={h.timeline} now={now} selected={node} onSelect={pick} /> : <p className="muted">Loading…</p>}
       </Section>
 
       <div className="exec-grid">
-        <Section title="Input">
-          <Fields fields={e.input} empty="Started without input." />
-        </Section>
+        {e.channels.length > 0 && (
+          <Section title={seq !== undefined ? "Shared state at this moment" : "Shared state"}>
+            <Fields fields={e.channels} empty="" />
+          </Section>
+        )}
         {open && (
           <Section title="Output">
             <p className="muted">The output appears when the execution completes.</p>
@@ -156,18 +220,21 @@ function Crumbs({ ns, flow }: { ns: string; flow?: string }) {
   );
 }
 
-function NodeDetail({ e, node, tl, now }: { e: api.Execution; node?: string; tl?: api.Timeline; now: number }) {
+function NodeDetail({ e, node, config, tl, now }: { e: api.Execution; node?: string; config?: api.StepConfig; tl?: api.Timeline; now: number }) {
   const gn = e.graph?.nodes.find((n) => n.id === node);
   if (!node || !gn) {
     return (
       <aside className="node-detail">
-        <p className="muted">Select a step to see its attempts.</p>
+        <p className="muted">Select a step to see how it is set up and what it did.</p>
         <Legend />
       </aside>
     );
   }
   const st = e.nodes?.[node] ?? { state: "idle" };
-  const spans = tl?.spans.filter((s) => s.node === node) ?? [];
+  // While replaying, now is the moment: later attempts have not happened.
+  const spans = (tl?.spans.filter((s) => s.node === node) ?? [])
+    .filter((s) => Date.parse(s.start) <= now)
+    .map((s) => (s.end && Date.parse(s.end) > now ? { ...s, end: undefined } : s));
   const err = e.errors.find((x) => x.node === node);
   const spent = spans.reduce((a, s) => ({ t: a.t + (s.tokens ?? 0), c: a.c + (s.cost_usd ?? 0) }), { t: 0, c: 0 });
 
@@ -189,8 +256,12 @@ function NodeDetail({ e, node, tl, now }: { e: api.Execution; node?: string; tl?
         )}
         {spans.length > 0 && (
           <>
-            <dt>Attempts</dt>
-            <dd className="num">{spans.filter((s) => s.outcome !== "human").length}</dd>
+            {spans.some((s) => (s.attempt ?? 1) > 1) && (
+              <>
+                <dt>Retries</dt>
+                <dd className="num">{spans.filter((s) => (s.attempt ?? 1) > 1).length}</dd>
+              </>
+            )}
             <dt>Time</dt>
             <dd className="num">
               {duration(spans.reduce((n, s) => n + ((s.end ? Date.parse(s.end) : now) - Date.parse(s.start)), 0))}
@@ -224,6 +295,7 @@ function NodeDetail({ e, node, tl, now }: { e: api.Execution; node?: string; tl?
           <Prose text={err?.error ?? st.error ?? ""} lines={5} />
         </div>
       )}
+      {config && <StepConfig c={config} />}
     </aside>
   );
 }
@@ -240,7 +312,7 @@ function Legend() {
   );
 }
 
-function UsageView({ u, budget }: { u?: api.Usage; budget: api.Execution["budget"] }) {
+function UsageView({ u, budget, steps, maxSteps }: { u?: api.Usage; budget: api.Execution["budget"]; steps: number; maxSteps?: number }) {
   if (!u) return null;
   const tiles: [string, string][] = [
     ["cost", money(u.cost_usd)],
@@ -274,9 +346,10 @@ function UsageView({ u, budget }: { u?: api.Usage; budget: api.Execution["budget
           <ShareBars shares={u.by_model} by={by} />
         </>
       )}
-      {budget.length > 0 && (
+      {(budget.length > 0 || !!maxSteps) && (
         <>
-          <h3 className="sub">Budget</h3>
+          <h3 className="sub">Limits</h3>
+          {!!maxSteps && <Meter label="steps" used={steps} limit={maxSteps} format={(n) => String(n)} />}
           {budget.map((b) => (
             <Meter
               key={b.counter}

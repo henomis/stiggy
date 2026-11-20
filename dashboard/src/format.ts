@@ -67,3 +67,18 @@ const STATUS_WORDS: Record<string, string> = {
 export function statusWord(s: string): string {
   return STATUS_WORDS[s] ?? s;
 }
+
+/** Fields in one line: "topic: ants, n: 3", clipped to max characters. */
+export function preview(fields: { key: string; text: string; kind?: string }[], max = 140): string {
+  // Text says most, then numbers and booleans; nested values last.
+  const rank = (k?: string) => (k === "text" ? 0 : k === "list" || k === "object" ? 2 : 1);
+  const line = [...fields]
+    .sort((a, b) => rank(a.kind) - rank(b.kind))
+    .map((f) => {
+      const text = f.text.replace(/\s+/g, " ").trim();
+      return f.key === "value" && fields.length === 1 ? text : `${f.key}: ${text}`;
+    })
+    .join(", ");
+  const chars = [...line];
+  return chars.length > max ? chars.slice(0, max - 1).join("") + "…" : line;
+}

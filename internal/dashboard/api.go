@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/henomis/packtrail"
+	"github.com/henomis/packtrail/flow"
 )
 
 const (
@@ -63,7 +64,9 @@ type Summary struct {
 	Reason    string            `json:"reason,omitempty"`
 	Parent    string            `json:"parent,omitempty"`
 	Attrs     map[string]string `json:"attrs,omitempty"`
-	// Usage and Nodes are set when the state was read.
+	// Input, Usage and Nodes are set when the state was read. Input is a
+	// one-line preview of what the execution was started with.
+	Input string                `json:"input,omitempty"`
 	Usage *Usage                `json:"usage,omitempty"`
 	Nodes map[string]NodeStatus `json:"nodes,omitempty"`
 }
@@ -292,7 +295,7 @@ func (s *Server) sampleUsage(ctx context.Context, c *packtrail.Client, view *Nam
 		}
 
 		u := s.usageOf(view.Name, st)
-		sample[i].Usage, sample[i].Nodes = &u, NodeStatuses(st)
+		sample[i].Usage, sample[i].Nodes, sample[i].Input = &u, NodeStatuses(st), PreviewOf(st.Input)
 		view.Usage.Add(u)
 		view.Sampled++
 
@@ -304,7 +307,7 @@ func (s *Server) sampleUsage(ctx context.Context, c *packtrail.Client, view *Nam
 	// The recent list shares the sample's first entries.
 	for i := range view.Recent {
 		if i < len(sample) {
-			view.Recent[i].Usage, view.Recent[i].Nodes = sample[i].Usage, sample[i].Nodes
+			view.Recent[i].Usage, view.Recent[i].Nodes, view.Recent[i].Input = sample[i].Usage, sample[i].Nodes, sample[i].Input
 		}
 	}
 
@@ -432,7 +435,7 @@ func (s *Server) executions(w http.ResponseWriter, r *http.Request) {
 	for i, st := range s.readStates(ctx, c, head) {
 		if st != nil {
 			u := s.usageOf(ns, st)
-			head[i].Usage, head[i].Nodes = &u, NodeStatuses(st)
+			head[i].Usage, head[i].Nodes, head[i].Input = &u, NodeStatuses(st), PreviewOf(st.Input)
 		}
 	}
 
@@ -455,7 +458,12 @@ type Execution struct {
 	FailedNode string                `json:"failed_node,omitempty"`
 	LastNode   string                `json:"last_node,omitempty"`
 	Steps      int                   `json:"steps"`
+	MaxSteps   int                   `json:"max_steps,omitempty"`
 	Archived   bool                  `json:"archived,omitempty"`
+	// Channels are the flow's shared state.
+	Channels []Field `json:"channels"`
+	// Seq is the event the execution is shown at (0: now).
+	Seq uint64 `json:"seq,omitempty"`
 }
 
 // NodeFailure is the last failure of a node.
@@ -493,7 +501,18 @@ func (s *Server) execution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st, err := c.Get(ctx, id)
+	// ?seq=N is the execution as it was right after event N.
+	var seq uint64
+
+	if v := r.URL.Query().Get("seq"); v != "" {
+		if seq, err = strconv.ParseUint(v, 10, 64); err != nil {
+			httpError(w, fmt.Errorf("%w: seq %q", packtrail.ErrInvalidArgument, v))
+
+			return
+		}
+	}
+
+	st, err := c.StateAt(ctx, id, seq)
 	if err != nil {
 		httpError(w, err)
 
@@ -501,12 +520,20 @@ func (s *Server) execution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := executionOf(ns, st)
-	u := s.usageOf(ns, st)
+	out.Seq = seq
+
+	u := UsageOf(st.Counters)
+	if seq == 0 {
+		u = s.usageOf(ns, st)
+	}
+
 	out.Usage = &u
 
 	if def, ferr := c.Flow(ctx, st.Flow, st.FlowHash); ferr == nil {
 		g := GraphOf(def)
 		out.Graph = &g
+
+		out.MaxSteps = def.MaxSteps
 
 		for k, v := range def.Budget {
 			out.Budget = append(out.Budget, Meter{Counter: k, Used: st.Counters[k], Limit: v})
@@ -539,6 +566,14 @@ func executionOf(ns string, st *packtrail.State) Execution {
 		out.Waits = []Wait{}
 	}
 
+	out.Channels = []Field{}
+
+	if len(st.Channels) > 0 {
+		if b, err := json.Marshal(st.Channels); err == nil {
+			out.Channels = FieldsOf(b)
+		}
+	}
+
 	if out.Input == nil {
 		out.Input = []Field{}
 	}
@@ -562,7 +597,9 @@ func executionOf(ns string, st *packtrail.State) Execution {
 	return out
 }
 
-func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
+// history reads an execution's event log for people: timeline, steps,
+// conversation with humans, and the moments it can be viewed at.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTTL)
 	defer cancel()
 
@@ -573,14 +610,22 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	evs, err := c.History(ctx, r.PathValue("id"))
+	id := r.PathValue("id")
+
+	evs, err := c.History(ctx, id)
 	if err != nil {
 		httpError(w, err)
 
 		return
 	}
 
-	writeJSON(w, TimelineOf(evs))
+	var def *flow.Flow
+
+	if st, gerr := c.Get(ctx, id); gerr == nil {
+		def, _ = c.Flow(ctx, st.Flow, st.FlowHash)
+	}
+
+	writeJSON(w, HistoryOf(evs, def))
 }
 
 func (s *Server) flowGraph(w http.ResponseWriter, r *http.Request) {

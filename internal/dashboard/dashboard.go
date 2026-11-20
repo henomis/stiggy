@@ -112,7 +112,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/live", s.live)
 	mux.HandleFunc("GET /api/ns/{ns}/executions", s.executions)
 	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}", s.execution)
-	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/timeline", s.timeline)
+	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/history", s.history)
 	mux.HandleFunc("GET /api/ns/{ns}/executions/{id}/progress", s.progress)
 	mux.HandleFunc("POST /api/ns/{ns}/executions/{id}/resume", s.resume)
 	mux.HandleFunc("POST /api/ns/{ns}/executions/{id}/cancel", s.cancel)

@@ -16,6 +16,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,26 @@ func TestFieldsOf(t *testing.T) {
 
 	if v := FieldsOf(json.RawMessage(`"plain"`)); len(v) != 1 || v[0].Key != "value" || v[0].Text != "plain" {
 		t.Fatalf("scalar = %+v", v)
+	}
+}
+
+func TestPreviewOf(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"topic": "ants", "n": 3}`:           "topic: ants, n: 3",
+		`{"customer": {"id": 1}, "b": "x"}`:   "b: x, customer: 1 field",
+		`{"subject": "line one\n  line two"}`: "subject: line one line two",
+		`{"tags": ["a", "b"], "ok": true}`:    "ok: true, tags: 2 items",
+		`"just text"`:                         "just text",
+		``:                                    "",
+	} {
+		if got := PreviewOf(json.RawMessage(in)); got != want {
+			t.Errorf("PreviewOf(%s) = %q, want %q", in, got, want)
+		}
+	}
+
+	long := PreviewOf(json.RawMessage(`{"text": "` + strings.Repeat("é", 300) + `"}`))
+	if n := len([]rune(long)); n != previewMax || !strings.HasSuffix(long, "…") {
+		t.Errorf("long preview: %d runes, %q", n, long[len(long)-8:])
 	}
 }
 

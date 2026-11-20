@@ -34,6 +34,7 @@ const (
 	taskRetrying    = "retrying"
 	taskInterrupted = "interrupted"
 	waitQuestion    = "question"
+	waitReview      = "review"
 )
 
 // Field kinds.
@@ -122,18 +123,7 @@ func GraphOf(def *flow.Flow) Graph {
 		n := &def.Nodes[i]
 		gn := GraphNode{ID: n.ID, Type: n.Type, Detail: detailOf(n)}
 
-		if s, ok, err := spec.StepOf(n); ok && err == nil {
-			gn.Human = s.HumanInput
-
-			switch {
-			case s.Agent != "":
-				gn.Role, gn.Runs = "agent", s.Agent
-			case s.Activity != "":
-				gn.Role, gn.Runs = "activity", s.Activity
-			case s.Remote != "":
-				gn.Role, gn.Runs = "remote", s.Remote
-			}
-		}
+		gn.Runs, gn.Role, gn.Human = runnerOf(n)
 
 		g.Nodes = append(g.Nodes, gn)
 
@@ -190,6 +180,33 @@ func nodeByID(def *flow.Flow, id string) *flow.Node {
 	}
 
 	return nil
+}
+
+// Who runs a step.
+const (
+	roleAgent    = "agent"
+	roleActivity = "activity"
+	roleRemote   = "remote"
+)
+
+// runnerOf is the agent, activity or remote a stiggy step runs, its role,
+// and whether it stops for a human; empty for other nodes.
+func runnerOf(n *flow.Node) (name, role string, human bool) {
+	s, ok, err := spec.StepOf(n)
+	if !ok || err != nil {
+		return "", "", false
+	}
+
+	switch {
+	case s.Agent != "":
+		return s.Agent, roleAgent, s.HumanInput
+	case s.Activity != "":
+		return s.Activity, roleActivity, s.HumanInput
+	case s.Remote != "":
+		return s.Remote, roleRemote, s.HumanInput
+	default:
+		return "", "", s.HumanInput
+	}
 }
 
 // entry is the node with no inbound transition.
@@ -651,6 +668,54 @@ func fieldOf(key string, v any, depth int) Field {
 		return f
 	default:
 		return Field{Key: key, Kind: kindText, Text: fmt.Sprint(x)}
+	}
+}
+
+// previewMax bounds an input preview, in runes.
+const previewMax = 140
+
+// PreviewOf is a JSON value in one line, for lists: "topic: ants, n: 3",
+// nested values shown by size, clipped to a sensible length.
+func PreviewOf(raw json.RawMessage) string {
+	fields := FieldsOf(raw)
+
+	// Text says most, then numbers and booleans; nested values last.
+	sort.SliceStable(fields, func(i, j int) bool { return previewRank(fields[i]) < previewRank(fields[j]) })
+
+	parts := make([]string, 0, len(fields))
+
+	for _, f := range fields {
+		text := strings.Join(strings.Fields(f.Text), " ")
+		if f.Key == scalarKey && len(fields) == 1 {
+			parts = append(parts, text)
+		} else {
+			parts = append(parts, f.Key+": "+text)
+		}
+	}
+
+	out := []rune(strings.Join(parts, ", "))
+	if len(out) > previewMax {
+		return string(out[:previewMax-1]) + "…"
+	}
+
+	return string(out)
+}
+
+// previewRank orders preview fields: text, then scalars, then nested values.
+func previewRank(f Field) int {
+	const (
+		text = iota
+		scalar
+		nested
+	)
+
+	switch f.Kind {
+	case kindText:
+		return text
+	case kindList, kindObject:
+		return nested
+	default:
+		return scalar
 	}
 }
 

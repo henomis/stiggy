@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ago, duration, money, shortId, tokens } from "./format";
+import { ago, duration, money, preview, shortId, tokens } from "./format";
 import { layoutTrail } from "./trail";
 
 describe("format", () => {
@@ -33,6 +33,12 @@ describe("format", () => {
     expect(ago("2026-11-20T11:59:50Z", now)).toBe("just now");
     expect(ago("2026-11-20T11:56:00Z", now)).toBe("4m ago");
     expect(ago("2026-11-19T10:00:00Z", now)).toBe("yesterday");
+  });
+
+  it("previews fields in one line", () => {
+    expect(preview([{ key: "topic", text: "ants" }, { key: "n", text: "3" }])).toBe("topic: ants, n: 3");
+    expect(preview([{ key: "value", text: "just\n text" }])).toBe("just text");
+    expect([...preview([{ key: "t", text: "é".repeat(300) }])].length).toBe(140);
   });
 
   it("shortens long ids only", () => {

@@ -36,6 +36,8 @@ export interface Summary {
   reason?: string;
   parent?: string;
   attrs?: Record<string, string>;
+  /** What the execution was started with, in one line. */
+  input?: string;
   usage?: Usage;
   nodes?: Record<string, NodeStatus>;
 }
@@ -147,7 +149,7 @@ export interface Field {
   items?: Field[];
 }
 
-export interface Execution extends Summary {
+export interface Execution extends Omit<Summary, "input"> {
   graph?: Graph;
   waits: Wait[];
   input: Field[];
@@ -159,7 +161,11 @@ export interface Execution extends Summary {
   failed_node?: string;
   last_node?: string;
   steps: number;
+  max_steps?: number;
   archived?: boolean;
+  channels: Field[];
+  /** The event the execution is shown at; absent: now. */
+  seq?: number;
 }
 
 export interface Span {
@@ -181,6 +187,90 @@ export interface Timeline {
   end?: string;
   spans: Span[];
   marks: { time: string; node?: string; text: string }[];
+}
+
+export interface StepConfig {
+  prompt?: string;
+  expected_output?: string;
+  routes?: string[];
+  context?: string[];
+  writes?: Record<string, string>;
+  max_attempts?: number;
+  backoff?: string;
+  retry_delay?: string;
+  timeout?: string;
+  cached?: boolean;
+  schema?: boolean;
+}
+
+export interface Run {
+  key: string;
+  visit: number;
+  attempt: number;
+  start: string;
+  end?: string;
+  outcome: Span["outcome"];
+  error?: string;
+  next?: string;
+  output?: Field[];
+  writes?: string[];
+  usage?: Usage;
+  resumed_by?: string;
+  retry_at?: string;
+}
+
+export interface StepHistory {
+  node: string;
+  config?: StepConfig;
+  runs: Run[];
+  choices?: { time: string; node?: string; text: string }[];
+}
+
+export interface Exchange {
+  node: string;
+  agent?: string;
+  kind: string;
+  text: string;
+  asked_at: string;
+  reply?: string;
+  approved?: boolean;
+  by?: string;
+  replied_at?: string;
+}
+
+export interface Moment {
+  seq: number;
+  time: string;
+  text: string;
+  node?: string;
+}
+
+export interface Entry {
+  kind: "start" | "step" | "human" | "event" | "end";
+  time: string;
+  end?: string;
+  node?: string;
+  who?: string;
+  role?: string;
+  visit?: number;
+  attempt?: number;
+  outcome?: Span["outcome"];
+  text?: string;
+  asks?: string;
+  output?: Field[];
+  kept?: boolean;
+  approved?: boolean;
+  next?: string;
+  error?: string;
+  usage?: Usage;
+}
+
+export interface History {
+  timeline: Timeline;
+  steps: Record<string, StepHistory>;
+  conversation: Exchange[];
+  moments: Moment[];
+  story: Entry[];
 }
 
 export interface Step {
@@ -228,8 +318,9 @@ export const executions = (ns: string, q: { status?: string; flow?: string; limi
   return call<{ executions: Summary[] }>("GET", `/api/ns/${enc(ns)}/executions?${p}`).then((r) => r.executions);
 };
 
-export const execution = (ns: string, id: string) => call<Execution>("GET", exec(ns, id));
-export const timeline = (ns: string, id: string) => call<Timeline>("GET", exec(ns, id) + "/timeline");
+export const execution = (ns: string, id: string, seq?: number) =>
+  call<Execution>("GET", exec(ns, id) + (seq ? `?seq=${seq}` : ""));
+export const history = (ns: string, id: string) => call<History>("GET", exec(ns, id) + "/history");
 export const flowGraph = (ns: string, flow: string) => call<Graph>("GET", `/api/ns/${enc(ns)}/flows/${enc(flow)}`);
 
 export interface Reply {
