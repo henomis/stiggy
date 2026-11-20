@@ -2342,3 +2342,13 @@ p.feed-text {
 .rec .prose {
   overflow-wrap: anywhere;
 }
+
+.entry-input {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 40%, var(--sheet));
+}
+
+.entry-input .muted {
+  margin: 2px 0 0;
+  font-size: 14px;
+}

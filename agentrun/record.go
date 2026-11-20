@@ -41,6 +41,9 @@ const (
 	ViaDelegate = "delegate"
 	// ViaAgent is any other run below the step's own.
 	ViaAgent = "agent"
+	// ViaRemote is the step's own run when a remote agent ran it: the
+	// record has the prompt sent and the answer, not the remote's own calls.
+	ViaRemote = "remote"
 )
 
 // Record is what one attempt of an agent step did, stored with the
@@ -65,9 +68,12 @@ type Record struct {
 type RecordRun struct {
 	Agent string `json:"agent"`
 	// Via and Tool say how a nested run was reached: by the delegate tool
-	// Tool, or otherwise. Empty on the step's own run.
+	// Tool, or otherwise. Empty on the step's own run, but for a remote
+	// agent's (ViaRemote).
 	Via  string `json:"via,omitempty"`
 	Tool string `json:"tool,omitempty"`
+	// Remote is the owner/name of the remote agent that ran the step.
+	Remote string `json:"remote,omitempty"`
 	// Model is the model of the run's first call.
 	Model   string `json:"model,omitempty"`
 	TraceID string `json:"trace_id,omitempty"`

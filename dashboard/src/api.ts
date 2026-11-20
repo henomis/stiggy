@@ -331,6 +331,8 @@ export interface RecordRun {
   agent: string;
   via?: string;
   tool?: string;
+  /** owner/name of the remote agent that ran the step (via "remote"). */
+  remote?: string;
   model?: string;
   trace_id?: string;
   span_id?: string;

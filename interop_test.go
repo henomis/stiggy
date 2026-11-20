@@ -501,3 +501,53 @@ expose:
 		t.Fatalf("run: %v", err)
 	}
 }
+
+// TestRemoteRecord checks a remote with record stores, per attempt, the
+// prompt sent and the answer, or the error of an attempt that failed.
+func TestRemoteRecord(t *testing.T) {
+	var calls atomic.Int64
+
+	analyst := handlerFunc(func(_ context.Context, parts ...llm.ContentPart) (*agent.Result, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("busy")
+		}
+
+		return textResult("low risk, " + llm.TextContent(parts...)), nil
+	})
+
+	h := startYAML(t, `
+remotes:
+  analyst: {owner: ops, name: analyst, record: prompt}
+flows:
+  ask:
+    nodes:
+      - {id: q, type: task, remote: analyst, prompt: "Pollen in {{.input.city}}?", retry: {max_attempts: 3, delay: 50ms}}
+`, nil)
+
+	serveRemote(t, h.Conn, "ops", "analyst", analyst)
+
+	st := h.Run(t, "ask", map[string]any{"city": "Rome"})
+	if st.Status != packtrail.StatusCompleted {
+		t.Fatalf("status %s: %s", st.Status, st.Error)
+	}
+
+	hist, recs := records(t, h, st.ExecID, "q")
+	if len(recs) != 2 || hist[0].Outcome != packtrail.OutcomeFailed || hist[1].Outcome != packtrail.OutcomeCompleted {
+		t.Fatalf("records = %+v", hist)
+	}
+
+	for i, r := range recs {
+		if r.Agent != "analyst" || r.Via != agentrun.ViaRemote || r.Remote != "ops/analyst" || len(r.Calls) != 1 ||
+			r.Calls[0].Messages[0].Text != "Pollen in Rome?" || r.Start.IsZero() || r.End.Before(r.Start) {
+			t.Errorf("record %d = %+v", i, r)
+		}
+	}
+
+	if recs[0].Error == "" || recs[0].StopReason != "error" || recs[0].Calls[0].Error == "" {
+		t.Errorf("failed attempt = %+v", recs[0])
+	}
+
+	if recs[1].Output != "low risk, Pollen in Rome?" || recs[1].Calls[0].Response != recs[1].Output || recs[1].Error != "" {
+		t.Errorf("answered attempt = %+v", recs[1])
+	}
+}

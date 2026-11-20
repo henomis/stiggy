@@ -71,6 +71,7 @@ type RecordRun struct {
 	Agent           string        `json:"agent"`
 	Via             string        `json:"via,omitempty"`
 	Tool            string        `json:"tool,omitempty"`
+	Remote          string        `json:"remote,omitempty"`
 	Model           string        `json:"model,omitempty"`
 	TraceID         string        `json:"trace_id,omitempty"`
 	SpanID          string        `json:"span_id,omitempty"`

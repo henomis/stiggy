@@ -231,7 +231,6 @@ func TestStrictDecoding(t *testing.T) {
 		"unknown node field":       "flows:\n  f:\n    nodes:\n      - {id: s, type: task, agnet: a}\n",
 		"wrong type":               "agents:\n  a: {model: m, max_iterations: lots}\n",
 		"unknown compaction field": "agents:\n  a:\n    model: m\n    compaction: {at_tokens: 10, bogus: 1}\n",
-		"record on a remote":       "remotes:\n  r: {owner: o, name: n, record: full}\n",
 	}
 
 	for name, doc := range cases {

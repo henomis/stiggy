@@ -110,7 +110,7 @@ function StoryEntry({
             <span className="entry-when">{clock(e.time)}</span>
           </div>
           {e.text && <p className="entry-line">{e.text}</p>}
-          {e.output && e.output.length > 0 && <Fields fields={e.output} empty="" />}
+          {!e.text && <StartInput fields={e.output ?? []} />}
         </li>
       );
     case "end":
@@ -151,6 +151,24 @@ function StoryEntry({
     default:
       return <StepEntry ns={ns} id={id} e={e} cls={cls} node={node} />;
   }
+}
+
+/** The keys of an input that hold the prompt it was started with. */
+const PROMPT_KEYS = ["prompt", "text", "message", "question"];
+
+/** What the execution was started with, as a box: its prompt as text, the
+ * other fields below it. */
+function StartInput({ fields }: { fields: api.Field[] }) {
+  const prompt = fields.find((f) => PROMPT_KEYS.includes(f.key) && f.kind === "text");
+  const rest = fields.filter((f) => f !== prompt);
+  return (
+    <div className="entry-answer entry-input">
+      <span className="rec-role">Started with</span>
+      {fields.length === 0 && <p className="muted">No input: the flow was started with nothing to work on, by its schedule or by hand.</p>}
+      {prompt && <Prose text={prompt.text} lines={8} />}
+      {rest.length > 0 && <Fields fields={rest} empty="" />}
+    </div>
+  );
 }
 
 const OUTCOME: Record<string, string> = {

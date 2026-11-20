@@ -209,12 +209,14 @@ const (
 const DefaultRecordMaxBytes = 256 << 10
 
 // RecordLevel returns the agent's record level, RecordOff when unset.
-func (a *Agent) RecordLevel() string {
-	if a.Record == "" {
+func (a *Agent) RecordLevel() string { return recordLevel(a.Record) }
+
+func recordLevel(s string) string {
+	if s == "" {
 		return RecordOff
 	}
 
-	return a.Record
+	return s
 }
 
 // MinRecordMaxBytes is the smallest cap of a record: room for the parts of
@@ -223,9 +225,11 @@ const MinRecordMaxBytes = 1 << 10
 
 // RecordLimit returns the cap of one record, in bytes: RecordMaxBytes,
 // raised to MinRecordMaxBytes, or DefaultRecordMaxBytes when unset.
-func (a *Agent) RecordLimit() int {
-	if a.RecordMaxBytes > 0 {
-		return max(a.RecordMaxBytes, MinRecordMaxBytes)
+func (a *Agent) RecordLimit() int { return recordLimit(a.RecordMaxBytes) }
+
+func recordLimit(n int) int {
+	if n > 0 {
+		return max(n, MinRecordMaxBytes)
 	}
 
 	return DefaultRecordMaxBytes
@@ -400,7 +404,20 @@ type Remote struct {
 	Name  string `yaml:"name" json:"name"`
 	// Description tells agents that delegate to it what it does.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Record keeps, with each attempt of the remote's steps, the prompt sent
+	// and the answer, for the dashboard: [RecordOff] (the default),
+	// [RecordPrompt] or [RecordFull], which record the same: the remote's
+	// own model and tool calls run elsewhere.
+	Record string `yaml:"record,omitempty" json:"record,omitempty"`
+	// RecordMaxBytes caps one record, as Agent.RecordMaxBytes.
+	RecordMaxBytes int `yaml:"record_max_bytes,omitempty" json:"record_max_bytes,omitempty"`
 }
+
+// RecordLevel returns the remote's record level, RecordOff when unset.
+func (r *Remote) RecordLevel() string { return recordLevel(r.Record) }
+
+// RecordLimit returns the cap of one record of the remote, in bytes.
+func (r *Remote) RecordLimit() int { return recordLimit(r.RecordMaxBytes) }
 
 // Expose lists what a fleet serves on the NATS Agent Protocol.
 type Expose struct {

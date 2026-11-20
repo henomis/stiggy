@@ -84,6 +84,7 @@ const STOP: Record<string, string> = {
 
 function RunView({ run, top, traceURL }: { run: api.RecordRun; top?: api.StepRecord; traceURL?: string }) {
   const facts: string[] = [];
+  if (run.remote) facts.push(`remote agent ${run.remote}`);
   if (run.model) facts.push(run.model);
   const took = span(run.start, run.end);
   if (took) facts.push(duration(took));
@@ -107,6 +108,12 @@ function RunView({ run, top, traceURL }: { run: api.RecordRun; top?: api.StepRec
           </>
         )}
       </p>
+      {run.via === "remote" && (
+        <p className="rec-note">
+          The prompt sent to the remote agent and its answer. Its own system prompt, model calls and tool calls run where it is served, and
+          are not recorded here.
+        </p>
+      )}
       {run.error && (
         <div className="entry-error">
           <Prose text={run.error} lines={4} />

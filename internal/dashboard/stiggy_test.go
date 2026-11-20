@@ -64,7 +64,7 @@ func TestMirrorsAgentrun(t *testing.T) {
 		ToolError: true, Truncated: true,
 	}
 	run := agentrun.RecordRun{
-		Agent: "a", Via: "delegate", Tool: "ask_a", Model: "m", TraceID: "t", SpanID: "s", System: "sys",
+		Agent: "a", Via: "delegate", Tool: "ask_a", Remote: "o/n", Model: "m", TraceID: "t", SpanID: "s", System: "sys",
 		SystemTruncated: true, ResponseFormat: "f", Tools: []string{"x"}, Output: "o", OutputTruncated: true,
 		Start: at, End: at, StopReason: "final", Iterations: 1, MaxIterations: 2, TTFTMs: 3,
 		Memory: &agentrun.RecordMemory{

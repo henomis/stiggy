@@ -379,7 +379,7 @@ models: {m: {provider: openai}}
 agents: {a: {model: m, delegates: [r]}, r: {model: m}}
 remotes:
   r: {owner: ops, name: reviewer}
-  bad: {owner: "o.x", name: n}
+  bad: {owner: "o.x", name: n, record: always, record_max_bytes: -1}
 flows:
   f:
     nodes:
@@ -390,6 +390,8 @@ expose: {agents: [a, nope], flows: [f, missing]}
 			want: []string{
 				`5: remotes.r: "r" is both an agent and a remote`,
 				`6: remotes.bad.owner:`,
+				`6: remotes.bad.record: must be off, prompt or full`,
+				`6: remotes.bad.record_max_bytes: must be positive`,
 				`10: flows.f.nodes.s.remote: unknown remote "ghost"`,
 				`11: flows.f.nodes.t.routes: routes need stiggy's route tools`,
 				`11: flows.f.nodes.t.human_input: human_input applies to stiggy agents only`,
