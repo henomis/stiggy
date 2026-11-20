@@ -1,17 +1,15 @@
 // The whole execution, top to bottom: every agent's answer, every human
 // reply, every routing decision, in the order they happened.
 
-import { useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 
 import type * as api from "./api";
 import { Fields, Prose } from "./Bits";
-import { RecordToggle } from "./Record";
+import { RecordNavContext, RecordToggle } from "./Record";
 import { clock, duration, money, plural, tokens } from "./format";
+import { entryAttempt, recId, type Attempt } from "./recordNav";
 
 interface Props {
-  /** The execution, for fetching attempt records. */
-  ns: string;
-  id: string;
   story: api.Entry[];
   /** While replaying, entries after this time have not happened yet. */
   until?: number;
@@ -24,8 +22,9 @@ interface Props {
 
 type Filter = "all" | "agents" | "humans";
 
-export function Story({ ns, id, story, until, selected, focus, onSelect, onClearFocus }: Props) {
+export function Story({ story, until, selected, focus, onSelect, onClearFocus }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
+  const nav = useContext(RecordNavContext);
   const shown = story.filter(
     (e) =>
       (!focus || e.node === focus) &&
@@ -33,6 +32,31 @@ export function Story({ ns, id, story, until, selected, focus, onSelect, onClear
       (filter === "humans" && (e.kind === "human" || e.asks)) ||
       (filter === "agents" && (e.kind === "step" || e.kind === "start" || e.kind === "end"))),
   );
+
+  // The recorded attempts of each step, in story order, for moving between
+  // them whatever the filter shows.
+  const attempts = useMemo(() => {
+    const m = new Map<string, Attempt[]>();
+    for (const e of story) {
+      const a = entryAttempt(e);
+      if (!a) continue;
+      const k = a.node + "\u0000" + a.key;
+      m.set(k, [...(m.get(k) ?? []), a]);
+    }
+    return m;
+  }, [story]);
+
+  // A record asked to be shown that the filter hides: show everything.
+  const target = nav?.target;
+  useEffect(() => {
+    if (!target || filter === "all") return;
+    const hidden = !shown.some((e) => {
+      const a = entryAttempt(e);
+      return a && recId(a) === target.rid;
+    });
+    if (hidden) setFilter("all");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.n]);
 
   return (
     <div className="story">
@@ -56,9 +80,8 @@ export function Story({ ns, id, story, until, selected, focus, onSelect, onClear
         {shown.map((e, i) => (
           <StoryEntry
             key={entryKey(e, i)}
-            ns={ns}
-            id={id}
             e={e}
+            attempts={attempts}
             future={until !== undefined && Date.parse(e.end ?? e.time) > until}
             selected={!!e.node && e.node === selected}
             onSelect={onSelect}
@@ -80,16 +103,14 @@ export function entryKey(e: api.Entry, i: number): string {
 }
 
 function StoryEntry({
-  ns,
-  id,
   e,
+  attempts,
   future,
   selected,
   onSelect,
 }: {
-  ns: string;
-  id: string;
   e: api.Entry;
+  attempts: Map<string, Attempt[]>;
   future: boolean;
   selected: boolean;
   onSelect: (n: string) => void;
@@ -149,7 +170,7 @@ function StoryEntry({
         </li>
       );
     default:
-      return <StepEntry ns={ns} id={id} e={e} cls={cls} node={node} />;
+      return <StepEntry e={e} cls={cls} node={node} attempts={attempts} />;
   }
 }
 
@@ -181,7 +202,8 @@ const OUTCOME: Record<string, string> = {
   running: "is working",
 };
 
-function StepEntry({ ns, id, e, cls, node }: { ns: string; id: string; e: api.Entry; cls: string; node: React.ReactNode }) {
+function StepEntry({ e, cls, node, attempts }: { e: api.Entry; cls: string; node: React.ReactNode; attempts: Map<string, Attempt[]> }) {
+  const at = entryAttempt(e);
   const took = e.end ? Date.parse(e.end) - Date.parse(e.time) : 0;
   const u = e.usage;
   const facts: string[] = [];
@@ -221,12 +243,14 @@ function StepEntry({ ns, id, e, cls, node }: { ns: string; id: string; e: api.En
           sent the work to <span className="route-chip">{e.next}</span>
         </p>
       )}
-      {e.recorded && e.node && e.key && e.generation && e.attempt && (
+      {at && (
         <RecordToggle
-          key={`${e.key}|${e.generation}|${e.attempt}`}
-          ns={ns}
-          id={id}
-          at={{ node: e.node, key: e.key, generation: e.generation, attempt: e.attempt }} />
+          key={recId(at)}
+          at={at}
+          outcome={e.outcome}
+          siblings={attempts.get(at.node + "\u0000" + at.key) ?? [at]}
+          hasOutput={!!e.output?.length}
+        />
       )}
     </li>
   );

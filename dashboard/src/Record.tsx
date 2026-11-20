@@ -1,79 +1,281 @@
-// What one attempt of an agent step did, from its record: the prompt sent
-// to the model, each model call, the tool calls and the nested runs, as
-// text to read.
+// What one attempt of an agent step did, from its record: what was sent to
+// the model, each model call as a step of a list, the tool calls and the
+// nested runs, as text to read.
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import * as api from "./api";
 import { Prose } from "./Bits";
 import { duration, money, plural, tokens } from "./format";
+import { href } from "./hooks";
+import {
+  answerPlan,
+  bytes,
+  defaultOpen,
+  ledgerParts,
+  matchChildren,
+  recId,
+  textBytes,
+  toggleLabel,
+  type Attempt,
+} from "./recordNav";
 
-type Attempt = { node: string; key: string; generation: number; attempt: number };
+/** The records of an execution's attempts: which are open, which the page
+ * asked to show, and those already fetched (kept across polls). */
+export interface RecordNav {
+  ns: string;
+  id: string;
+  isOpen: (rid: string) => boolean;
+  /** Opens or closes a record where it is. */
+  setOpen: (at: Attempt, open: boolean) => void;
+  /** Opens a record, scrolls to it and moves the focus to it. */
+  show: (at: Attempt) => void;
+  /** True once for the record show asked for last, when rid is it. */
+  take: (rid: string) => boolean;
+  /** Changes each time show is called. */
+  target?: { rid: string; n: number };
+  cache: Map<string, api.AttemptRecord>;
+}
+
+export const RecordNavContext = createContext<RecordNav | undefined>(undefined);
+
+/** Expand all: every fold of a record opened, every text shown whole. gen
+ * counts the presses, so that a fold follows each one. */
+const Expand = createContext({ all: false, gen: 0 });
+
+/** Prose that shows all of itself on Expand all. */
+function P(props: { text: string; lines?: number }) {
+  return <Prose {...props} open={useContext(Expand).all} />;
+}
+
+/** A details element that follows Expand all, and the reader otherwise. */
+function Fold({ summary, open: initial = false, className, children }: { summary: ReactNode; open?: boolean; className?: string; children: ReactNode }) {
+  const ex = useContext(Expand);
+  const [open, setOpen] = useState(ex.gen > 0 ? ex.all : initial);
+  const gen = useRef(ex.gen);
+  useEffect(() => {
+    if (gen.current === ex.gen) return;
+    gen.current = ex.gen;
+    setOpen(ex.all);
+  }, [ex.gen, ex.all]);
+  return (
+    <details className={className ?? "rec-fold"} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{summary}</summary>
+      <div className="rec-fold-body">{children}</div>
+    </details>
+  );
+}
+
+const CUT_TITLE = "Only the start was kept (record_max_bytes)";
+const Cut = ({ dot }: { dot?: boolean }) => (
+  <span className="rec-cutmark" title={CUT_TITLE}>
+    {dot ? " · cut" : " (cut)"}
+  </span>
+);
 
 /** The toggle of one attempt's record, and the record once loaded. */
-export function RecordToggle({ ns, id, at }: { ns: string; id: string; at: Attempt }) {
-  const [open, setOpen] = useState(false);
-  const [rec, setRec] = useState<api.AttemptRecord>();
-  const [err, setErr] = useState<string>();
+export function RecordToggle({
+  at,
+  outcome,
+  siblings,
+  hasOutput,
+}: {
+  at: Attempt;
+  outcome?: string;
+  /** The recorded attempts of the same step, this one among them. */
+  siblings: Attempt[];
+  /** The story entry shows the answer as fields. */
+  hasOutput: boolean;
+}) {
+  const nav = useContext(RecordNavContext)!;
+  const rid = recId(at);
+  const open = nav.isOpen(rid);
+  const [rec, setRec] = useState<api.AttemptRecord | undefined>(() => nav.cache.get(rid));
+  const [err, setErr] = useState<{ status?: number; msg: string }>();
+  const [tries, setTries] = useState(0);
+  const [ex, setEx] = useState({ all: false, gen: 0 });
+  const panelId = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const head = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     if (!open || rec) return;
+    const kept = nav.cache.get(rid);
+    if (kept) {
+      setRec(kept);
+      return;
+    }
     let live = true;
+    setErr(undefined);
     api
-      .record(ns, id, at)
-      .then((r) => live && setRec(r))
-      .catch((e: Error) => live && setErr(e.message));
+      .record(nav.ns, nav.id, at)
+      .then((r) => {
+        nav.cache.set(rid, r);
+        if (live) setRec(r);
+      })
+      .catch((e: Error) => live && setErr({ status: e instanceof api.ApiError ? e.status : undefined, msg: e.message }));
     return () => {
       live = false;
     };
-  }, [open, rec, ns, id, at.node, at.key, at.generation, at.attempt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rec, rid, tries, nav.ns, nav.id]);
+
+  // Asked to show this record (a link, a sibling, the side panel): bring it
+  // into view and put the focus on it.
+  useEffect(() => {
+    if (!open || !nav.take(rid)) return;
+    root.current?.closest("li")?.scrollIntoView({ block: "start" });
+    head.current?.focus({ preventScroll: true });
+  });
+
+  const i = siblings.findIndex((s) => recId(s) === rid);
+  const prev = i > 0 ? siblings[i - 1] : undefined;
+  const next = i >= 0 && i < siblings.length - 1 ? siblings[i + 1] : undefined;
+  const remote = rec?.record?.via === "remote";
 
   return (
-    <div className="rec-toggle">
-      <button type="button" className="link" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? "Hide the prompt" : "Show the prompt"}
+    <div className="rec-toggle" ref={root}>
+      <button type="button" className="link" aria-expanded={open} aria-controls={panelId} onClick={() => nav.setOpen(at, !open)}>
+        {toggleLabel(outcome, open)}
       </button>
       {open && (
-        <div className="rec">
-          {err ? <p className="entry-error">Could not load the record: {err}</p> : !rec ? <p className="muted">Loading…</p> : <AttemptView a={rec} />}
+        <div id={panelId} className="rec" role="region" aria-label={`Record of ${at.node}, attempt ${at.attempt}`}>
+          <div className="rec-top">
+            <h4 className="rec-title" ref={head} tabIndex={-1}>
+              {siblings.length > 1 && i >= 0 ? `Attempt ${i + 1} of ${siblings.length}` : "Record"}
+            </h4>
+            {siblings.length > 1 && i >= 0 && (
+              <span className="rec-nav">
+                <button type="button" className="link" disabled={!prev} onClick={() => prev && nav.show(prev)}>
+                  <span aria-hidden>◂ </span>previous
+                </button>
+                <button type="button" className="link" disabled={!next} onClick={() => next && nav.show(next)}>
+                  next<span aria-hidden> ▸</span>
+                </button>
+              </span>
+            )}
+            {rec?.record && !remote && (
+              <button type="button" className="link rec-expand" onClick={() => setEx({ all: !ex.all, gen: ex.gen + 1 })}>
+                {ex.all ? "Collapse all" : "Expand all"}
+              </button>
+            )}
+            <CopyLink at={at} />
+          </div>
+          {rec ? (
+            <Expand.Provider value={ex}>
+              <AttemptView a={rec} hasOutput={hasOutput} />
+            </Expand.Provider>
+          ) : err?.status === 404 ? (
+            <p className="muted rec-state">No record was kept for this attempt.</p>
+          ) : err ? (
+            <p className="rec-state">
+              <span className="entry-error">Could not load the record: {err.msg}</span>{" "}
+              <button
+                type="button"
+                className="link"
+                onClick={() => {
+                  setErr(undefined);
+                  setTries(tries + 1);
+                }}
+              >
+                Try again
+              </button>
+            </p>
+          ) : (
+            <p className="rec-loading rec-state" aria-busy="true">
+              Loading the record…
+            </p>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function AttemptView({ a }: { a: api.AttemptRecord }) {
-  if (a.too_large) {
-    return (
-      <>
-        <p className="rec-cut">Record too large ({tokens(a.too_large.size)} bytes): only its start was kept.</p>
-        <Prose text={a.too_large.head} lines={6} />
-      </>
-    );
-  }
-  const r = a.record;
-  if (!r) return <p className="muted">No record.</p>;
+/** Copies a link that opens this record; where the clipboard is out of
+ * reach, shows the link to copy by hand. */
+function CopyLink({ at }: { at: Attempt }) {
+  const nav = useContext(RecordNavContext)!;
+  const [said, setSaid] = useState<"copied" | "manual">();
+  const url = location.origin + location.pathname + location.search + href.execution(nav.ns, nav.id, at);
+
+  useEffect(() => {
+    if (said !== "copied") return;
+    const t = setTimeout(() => setSaid(undefined), 2500);
+    return () => clearTimeout(t);
+  }, [said]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setSaid("copied");
+    } catch {
+      setSaid(copyByHand(url) ? "copied" : "manual");
+    }
+  };
+
   return (
-    <>
-      {r.truncated && <p className="rec-cut">This record was cut to fit its size limit: items marked “cut” keep only their start.</p>}
-      <RunView run={r} top={r} traceURL={a.trace_url} />
-    </>
+    <span className="rec-link">
+      <button type="button" className="icon-btn" aria-label="Copy link to this record" title="Copy link to this record" onClick={copy}>
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
+          <path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 013.7 3.7L10.7 8.2M9 11.5l-1.2 1.2a2.6 2.6 0 01-3.7-3.7L5.3 7.8" />
+        </svg>
+      </button>
+      <span role="status" className="rec-copied">
+        {said === "copied" && "Link copied"}
+        {said === "manual" && (
+          <input className="rec-url" readOnly value={url} aria-label="Link to this record" onFocus={(e) => e.currentTarget.select()} autoFocus />
+        )}
+      </span>
+    </span>
   );
 }
 
-function usageFacts(u: api.RecordUsage | undefined, out: string[]) {
-  if (!u) return;
-  const n = u.input_tokens + u.output_tokens;
-  if (n) out.push(`${tokens(u.input_tokens)} in, ${tokens(u.output_tokens)} out`);
-  if (u.cache_read_tokens) out.push(`${tokens(u.cache_read_tokens)} cached`);
-  if (u.reasoning_tokens) out.push(`${tokens(u.reasoning_tokens)} reasoning`);
-  if (u.cost_usd) out.push(money(u.cost_usd));
+/** The old way to copy, for pages served without a secure context. */
+function copyByHand(text: string): boolean {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+function AttemptView({ a, hasOutput }: { a: api.AttemptRecord; hasOutput: boolean }) {
+  if (a.too_large) {
+    return (
+      <div className="rec-run">
+        <p className="rec-cut">Record too large ({bytes(a.too_large.size)}): only its start was kept.</p>
+        <Fold summary="Show the start of the raw record">
+          <div className="rec-args">
+            <P text={a.too_large.head} lines={6} />
+          </div>
+        </Fold>
+      </div>
+    );
+  }
+  const r = a.record;
+  if (!r) return <p className="muted rec-state">No record was kept for this attempt.</p>;
+  return (
+    <>
+      {r.truncated && <p className="rec-cut">This record was cut to fit its size limit: items marked “cut” keep only their start.</p>}
+      <RunView run={r} top={r} traceURL={a.trace_url} shownAs={hasOutput ? "fields" : undefined} path={[r.agent]} />
+    </>
+  );
 }
 
 const span = (a?: string, b?: string) => (a && b ? Date.parse(b) - Date.parse(a) : 0);
 
 const STOP: Record<string, string> = {
-  final: "answered",
   max_iterations: "reached its iteration limit",
   handoff: "handed off",
   stopped: "was stopped by a tool",
@@ -82,95 +284,269 @@ const STOP: Record<string, string> = {
   error: "failed",
 };
 
-function RunView({ run, top, traceURL }: { run: api.RecordRun; top?: api.StepRecord; traceURL?: string }) {
-  const facts: string[] = [];
-  if (run.remote) facts.push(`remote agent ${run.remote}`);
-  if (run.model) facts.push(run.model);
-  const took = span(run.start, run.end);
-  if (took) facts.push(duration(took));
-  if (run.stop_reason) facts.push(STOP[run.stop_reason] ?? run.stop_reason);
-  if (run.iterations) facts.push(`${plural(run.iterations, "iteration")}${run.max_iterations ? ` of ${run.max_iterations}` : ""}`);
-  if (run.ttft_ms) facts.push(`first token in ${duration(run.ttft_ms)}`);
-  usageFacts(run.usage, facts);
+const inOut = (u: api.RecordUsage | undefined) =>
+  u && u.input_tokens + u.output_tokens ? `${tokens(u.input_tokens)} in / ${tokens(u.output_tokens)} out` : "";
 
+/** A run's facts, in one line. */
+function runFacts(run: api.RecordRun): string[] {
+  const f: string[] = [];
+  if (run.remote) f.push(`remote agent ${run.remote}`);
+  if (run.model) f.push(run.model);
+  const took = span(run.start, run.end);
+  if (took) f.push(duration(took));
+  const io = inOut(run.usage);
+  if (io) f.push(io);
+  if (run.usage?.cost_usd) f.push(money(run.usage.cost_usd));
+  if (run.ttft_ms) f.push(`first token in ${duration(run.ttft_ms)}`);
+  return f;
+}
+
+function RunView({
+  run,
+  top,
+  traceURL,
+  shownAs,
+  path,
+}: {
+  run: api.RecordRun;
+  top?: api.StepRecord;
+  traceURL?: string;
+  /** Where else the run's answer shows (see answerPlan). */
+  shownAs?: "fields" | "tool";
+  /** The agents from the step's own down to this run. */
+  path: string[];
+}) {
   const calls = run.calls ?? [];
+  const remote = run.via === "remote";
+  const nested = path.length > 1;
+  const { byCall, rest } = matchChildren(calls, run.children ?? []);
+  const failedCall = [...calls].reverse().find((c) => c.error);
+  const error = run.error ?? failedCall?.error;
+  const plan = answerPlan(shownAs, run);
+  const sent = calls[0]?.messages ?? [];
+  const after: string[] = [];
+  if (run.stop_reason && run.stop_reason !== "final") after.push(STOP[run.stop_reason] ?? run.stop_reason);
+  if (run.iterations && run.iterations > 1) after.push(`${plural(run.iterations, "iteration")}${run.max_iterations ? ` of ${run.max_iterations}` : ""}`);
+  const facts = runFacts(run);
+  const fieldCount = top?.output_schema ? Object.keys((top.output_schema.properties ?? {}) as object).length : 0;
 
   return (
-    <div className="rec-run">
-      <p className="rec-facts">
-        {facts.join(" · ")}
-        {traceURL && (
-          <>
-            {" · "}
-            <a href={traceURL} target="_blank" rel="noreferrer">
-              trace
-            </a>
-          </>
-        )}
-      </p>
-      {run.via === "remote" && (
-        <p className="rec-note">
-          The prompt sent to the remote agent and its answer. Its own system prompt, model calls and tool calls run where it is served, and
-          are not recorded here.
+    <div className={`rec-run${nested ? " rec-nested" : ""}`}>
+      {nested && (
+        <p className="rec-path">
+          <span className="rec-path-short">
+            {run.agent}
+            <span className="muted">{run.via === "delegate" ? `, asked through ${run.tool}` : ", run inside this step"}</span>
+          </span>
+          <span className="rec-path-full">{path.join(" › ")}</span>
         </p>
       )}
-      {run.error && (
-        <div className="entry-error">
-          <Prose text={run.error} lines={4} />
-        </div>
-      )}
-      {run.system && (
-        <Fold title={`System prompt${run.system_truncated ? " (cut)" : ""}`}>
-          <Prose text={run.system} lines={12} />
-        </Fold>
-      )}
-      {(run.response_format || top?.output_schema) && (
-        <Fold title={`Answer format${run.response_format ? `: ${run.response_format}` : ""}`}>
-          {top?.output_schema ? <Schema schema={top.output_schema} /> : <p className="muted">Structured output.</p>}
-        </Fold>
-      )}
-      {run.tools && run.tools.length > 0 && (
-        <p className="rec-tools">
-          <span className="muted">Tools offered:</span>{" "}
-          {run.tools.map((t) => (
-            <span key={t} className="route-chip">
-              {t}
-            </span>
-          ))}
+      {(facts.length > 0 || after.length > 0 || traceURL) && (
+        <p className="rec-facts">
+          {[...facts, ...after].join(" · ")}
+          {traceURL && (
+            <>
+              {facts.length + after.length > 0 ? " · " : ""}
+              <a href={traceURL} target="_blank" rel="noreferrer">
+                trace
+              </a>
+            </>
+          )}
         </p>
       )}
-      {run.memory && <MemoryView m={run.memory} />}
-      {calls.length > 1 && <CallTimeline calls={calls} start={run.start} end={run.end} />}
-      <ol className="rec-calls">
-        {calls.map((c, i) => (
-          <CallView key={i} c={c} n={i + 1} />
-        ))}
-      </ol>
-      {run.output && (
-        <div className="rec-block">
-          <h4>Final answer{run.output_truncated ? " (cut)" : ""}</h4>
-          <Prose text={run.output} lines={10} />
+      {error && (
+        <div className="entry-error rec-error">
+          <P text={error} lines={4} />
         </div>
       )}
-      {run.children && run.children.length > 0 && (
-        <div className="rec-children">
-          {run.children.map((ch, i) => (
-            <Fold key={i} title={`${ch.agent}${ch.via === "delegate" ? `, asked through ${ch.tool}` : ", run inside this step"}`}>
-              <RunView run={ch} />
+      {!remote && (run.system || run.response_format || fieldCount > 0 || run.tools?.length || run.memory) && (
+        <div className="rec-folds">
+          {run.system && (
+            <Fold
+              summary={
+                <>
+                  System prompt · {bytes(textBytes(run.system))}
+                  {run.system_truncated && <Cut dot />}
+                </>
+              }
+            >
+              <P text={run.system} lines={12} />
             </Fold>
+          )}
+          {(run.response_format || fieldCount > 0) && (
+            <Fold summary={`Answer format · ${fieldCount ? plural(fieldCount, "field") : run.response_format}`}>
+              {top?.output_schema ? <Schema schema={top.output_schema} /> : <p className="muted">Structured output.</p>}
+            </Fold>
+          )}
+          {run.tools && run.tools.length > 0 && (
+            <Fold summary={`Tools offered (${run.tools.length})`}>
+              <p className="rec-chips">
+                {run.tools.map((t) => (
+                  <span key={t} className="route-chip">
+                    {t}
+                  </span>
+                ))}
+              </p>
+            </Fold>
+          )}
+          {run.memory && <MemoryView m={run.memory} />}
+        </div>
+      )}
+      {sent.length > 0 && (
+        <ul className="rec-msgs rec-sent">
+          {sent.map((m, i) => (
+            <MessageView key={i} m={m} user={remote ? "Asked" : "Sent"} />
           ))}
+        </ul>
+      )}
+      {remote && <p className="rec-note">Its own prompt and tool calls stay where it is served.</p>}
+      {!remote && calls.length === 1 && (calls[0].tool_calls ?? []).length > 0 && (
+        <ul className="rec-tool-calls">
+          {calls[0].tool_calls!.map((t, i) => (
+            <ToolCallView key={i} t={t} child={byCall.get(t)} path={path} />
+          ))}
+        </ul>
+      )}
+      {!remote && calls.length >= 2 && <Ledger run={run} byCall={byCall} path={path} answer={plan.kind === "none" ? undefined : plan.text} />}
+      {rest.map((ch, i) => (
+        <RunView key={i} run={ch} path={[...path, ch.agent]} />
+      ))}
+      {plan.kind === "raw" && (
+        <Fold
+          summary={
+            <>
+              Raw answer (shown above as fields)
+              {plan.cut && <Cut />}
+            </>
+          }
+        >
+          <P text={plan.text} lines={10} />
+        </Fold>
+      )}
+      {plan.kind === "open" && (
+        <div className="rec-block">
+          <h5>
+            {nested ? "Its answer" : "Last answer from the model"}
+            {plan.cut && <Cut />}
+          </h5>
+          <P text={plan.text} lines={10} />
         </div>
       )}
     </div>
   );
 }
 
-function Fold({ title, children }: { title: string; children: React.ReactNode }) {
+/** Consecutive calls of one tool with one outcome, as one chip. */
+function chipGroups(ts: api.RecordToolCall[]): { tool: string; failed: boolean; n: number }[] {
+  const out: { tool: string; failed: boolean; n: number }[] = [];
+  for (const t of ts) {
+    const last = out[out.length - 1];
+    if (last && last.tool === t.tool && last.failed === !!t.error) last.n++;
+    else out.push({ tool: t.tool, failed: !!t.error, n: 1 });
+  }
+  return out;
+}
+
+function ToolChips({ ts }: { ts: api.RecordToolCall[] }) {
   return (
-    <details className="rec-fold">
-      <summary>{title}</summary>
-      <div className="rec-fold-body">{children}</div>
-    </details>
+    <>
+      {chipGroups(ts).map((g, i) => (
+        <span key={i} className={`route-chip tool-chip${g.failed ? " failed" : ""}`}>
+          {g.failed && <span aria-hidden>✕ </span>}
+          {g.tool}
+          {g.n > 1 && ` ×${g.n}`}
+          {g.failed && <span className="sr-only"> failed</span>}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** The model calls of a run, one line each; a line opens on what the call
+ * was given, what it answered and the tools it called. */
+function Ledger({ run, byCall, path, answer }: { run: api.RecordRun; byCall: Map<api.RecordToolCall, api.RecordRun>; path: string[]; answer?: string }) {
+  const calls = run.calls ?? [];
+  const parts = ledgerParts(calls);
+  return (
+    <div className="rec-ledger">
+      {calls.length >= 3 && <CallTimeline calls={calls} start={run.start} end={run.end} />}
+      <ol className="rec-steps">
+        {calls.map((c, i) => {
+          const last = i === calls.length - 1;
+          const ts = c.tool_calls ?? [];
+          const toolFailed = ts.some((t) => t.error);
+          const facts = [c.compaction ? "summary of the conversation" : c.model, duration(span(c.start, c.end)), inOut(c.usage)].filter(
+            (x) => x && x !== "0ms",
+          );
+          const p = parts[i];
+          const empty = !p.msgs.length && !p.reasoning && !c.error && !c.response && !ts.length;
+          return (
+            <li key={i}>
+              <Fold
+                className={`rec-step${c.error || toolFailed ? " failed" : ""}`}
+                open={defaultOpen(c, last)}
+                summary={
+                  <>
+                    <span className="rec-step-head">
+                      <span className="rec-step-n">{i + 1}</span>
+                      <span className="rec-step-facts">
+                        {facts.join(" · ")}
+                        {c.error && <span className="rec-failed"> · failed</span>}
+                      </span>
+                    </span>
+                    {ts.length > 0 && (
+                      <span className="rec-step-tools">
+                        <span aria-hidden>→ </span>
+                        <ToolChips ts={ts} />
+                      </span>
+                    )}
+                  </>
+                }
+              >
+                {p.msgs.length > 0 && (
+                  <ul className="rec-msgs">
+                    {p.msgs.map((m, j) => (
+                      <MessageView key={j} m={m} user="Sent" />
+                    ))}
+                  </ul>
+                )}
+                {p.reasoning && (
+                  <div className="rec-reasoning">
+                    <span className="rec-role">Reasoning</span>
+                    <P text={p.reasoning} lines={3} />
+                  </div>
+                )}
+                {c.error && (
+                  <div className="entry-error">
+                    <P text={c.error} lines={4} />
+                  </div>
+                )}
+                {c.response &&
+                  (last && answer === c.response ? (
+                    <p className="rec-note">Its answer is shown below.</p>
+                  ) : (
+                    <div className="rec-response">
+                      <span className="rec-role">
+                        Answer
+                        {c.response_truncated && <Cut />}
+                      </span>
+                      <P text={c.response} lines={8} />
+                    </div>
+                  ))}
+                {ts.length > 0 && (
+                  <ul className="rec-tool-calls">
+                    {ts.map((t, j) => (
+                      <ToolCallView key={j} t={t} child={byCall.get(t)} path={path} />
+                    ))}
+                  </ul>
+                )}
+                {empty && i > 0 && <p className="muted">Nothing else was kept for this call.</p>}
+              </Fold>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
@@ -198,7 +574,7 @@ function Schema({ schema }: { schema: Record<string, unknown> }) {
 function MemoryView({ m }: { m: api.RecordMemory }) {
   const items = [...(m.retrieved_items ?? []).map((x) => ["retrieved", x] as const), ...(m.saved_items ?? []).map((x) => ["saved", x] as const)];
   return (
-    <Fold title={`Memory: ${plural(m.retrieved, "message")} retrieved, ${m.saved} saved`}>
+    <Fold summary={`Memory · ${m.retrieved} retrieved, ${m.saved} saved`}>
       {items.length === 0 ? (
         <p className="muted">No messages kept in the record.</p>
       ) : (
@@ -212,72 +588,24 @@ function MemoryView({ m }: { m: api.RecordMemory }) {
   );
 }
 
-const ROLE: Record<string, string> = { user: "Prompt", assistant: "Model", tool: "Tool result", system: "System" };
+const ROLE: Record<string, string> = { assistant: "Model", tool: "Tool result", system: "System" };
 
-function MessageView({ m, label }: { m: api.RecordMessage; label?: string }) {
-  const who = [label, ROLE[m.role] ?? m.role, m.name].filter(Boolean).join(" · ");
+function MessageView({ m, label, user = "Sent" }: { m: api.RecordMessage; label?: string; user?: string }) {
+  const who = [label, m.role === "user" ? user : ROLE[m.role] ?? m.role, m.name].filter(Boolean).join(" · ");
   return (
     <li className={`rec-msg r-${m.role}${m.tool_error ? " failed" : ""}`}>
       <span className="rec-role">
         {who}
         {m.tool_error ? " (failed)" : ""}
-        {m.truncated ? " (cut)" : ""}
+        {m.truncated && <Cut />}
       </span>
       {m.reasoning && (
         <div className="rec-reasoning">
-          <Prose text={m.reasoning} lines={3} />
+          <P text={m.reasoning} lines={3} />
         </div>
       )}
-      {m.text ? <Prose text={m.text} lines={8} /> : !m.tool_calls?.length && <span className="muted">(empty)</span>}
+      {m.text ? <P text={m.text} lines={8} /> : !m.tool_calls?.length && <span className="muted">(empty)</span>}
       {m.tool_calls && m.tool_calls.length > 0 && <span className="muted">calls {m.tool_calls.join(", ")}</span>}
-    </li>
-  );
-}
-
-function CallView({ c, n }: { c: api.RecordCall; n: number }) {
-  const facts: string[] = [];
-  if (c.model) facts.push(c.model);
-  const took = span(c.start, c.end);
-  if (took) facts.push(duration(took));
-  if (c.ttft_ms) facts.push(`first token in ${duration(c.ttft_ms)}`);
-  usageFacts(c.usage, facts);
-  if (c.finish_reason && c.finish_reason !== "stop") facts.push(`stopped: ${c.finish_reason}`);
-  const msgs = c.messages ?? [];
-
-  return (
-    <li className={`rec-call${c.error ? " failed" : ""}`}>
-      <div className="rec-call-head">
-        <strong>{c.compaction ? "Summary of the conversation" : `Model call ${n}`}</strong>
-        <span className="muted">{facts.join(" · ")}</span>
-      </div>
-      {msgs.length > 0 && (
-        <>
-          {c.message_offset > 0 && <p className="rec-note">New since the previous call (from message {c.message_offset + 1}):</p>}
-          <ul className="rec-msgs">
-            {msgs.map((m, i) => (
-              <MessageView key={i} m={m} />
-            ))}
-          </ul>
-        </>
-      )}
-      {c.error && (
-        <div className="entry-error">
-          <Prose text={c.error} lines={4} />
-        </div>
-      )}
-      {c.response && (
-        <div className="rec-response">
-          <span className="rec-role">Answer{c.response_truncated ? " (cut)" : ""}</span>
-          <Prose text={c.response} lines={8} />
-        </div>
-      )}
-      {c.tool_calls && c.tool_calls.length > 0 && (
-        <ul className="rec-tool-calls">
-          {c.tool_calls.map((t, i) => (
-            <ToolCallView key={i} t={t} />
-          ))}
-        </ul>
-      )}
     </li>
   );
 }
@@ -296,27 +624,40 @@ export function argsText(args: string): string {
   return args;
 }
 
-function ToolCallView({ t }: { t: api.RecordToolCall }) {
+/** One tool call: its arguments, the run it started (a delegate), then
+ * its result or error. */
+function ToolCallView({ t, child, path }: { t: api.RecordToolCall; child?: api.RecordRun; path: string[] }) {
   const took = span(t.start, t.end);
   return (
     <li className={`rec-tool${t.error ? " failed" : ""}`}>
       <div className="rec-call-head">
-        <span className="route-chip">{t.tool}</span>
+        <span className={`route-chip tool-chip${t.error ? " failed" : ""}`}>
+          {t.error && <span aria-hidden>✕ </span>}
+          {t.tool}
+        </span>
         <span className="muted">
-          {[t.error ? "failed" : "", took ? duration(took) : "", t.truncated ? "cut" : ""].filter(Boolean).join(" · ")}
+          {t.error && <span className="rec-failed">failed</span>}
+          {t.error && took ? " · " : ""}
+          {took ? duration(took) : ""}
+          {t.truncated && <Cut dot />}
         </span>
       </div>
       {t.args && (
         <div className="rec-args">
-          <Prose text={argsText(t.args)} lines={4} />
+          <P text={argsText(t.args)} lines={4} />
         </div>
       )}
+      {child && <RunView run={child} shownAs="tool" path={[...path, child.agent]} />}
       {t.error && (
         <div className="entry-error">
-          <Prose text={t.error} lines={3} />
+          <P text={t.error} lines={3} />
         </div>
       )}
-      {t.result && <Prose text={t.result} lines={5} />}
+      {t.result && (
+        <div className="rec-result">
+          <P text={t.result} lines={5} />
+        </div>
+      )}
     </li>
   );
 }

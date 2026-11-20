@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as api from "./api";
+import { decodeRec, encodeRec, type Attempt } from "./recordNav";
 
 /** Polls load every ms while the page is visible; refresh() reloads now. */
 export function usePoll<T>(load: () => Promise<T>, ms: number, deps: unknown[]) {
@@ -39,18 +40,26 @@ export function usePoll<T>(load: () => Promise<T>, ms: number, deps: unknown[]) 
   return { data, error, at, refresh };
 }
 
-/** The route, from the location hash: #/ns/<ns>/x/<id>. */
+/** The route, from the location hash: #/ns/<ns>/x/<id>, with
+ * ?rec=<node>.<key>.<generation>.<attempt> for an attempt's open record. */
 export type Route =
   | { page: "overview" }
   | { page: "namespace"; ns: string; flow?: string; status?: string }
-  | { page: "execution"; ns: string; id: string };
+  | { page: "execution"; ns: string; id: string; rec?: Attempt };
+
+/** The rec= value of a query, as written: its parts carry their own
+ * encoding, which URLSearchParams would undo. */
+const rawRec = (query: string) => /(?:^|&)rec=([^&]*)/.exec(query)?.[1];
 
 export function parseRoute(hash: string): Route {
   const [path, query = ""] = hash.replace(/^#/, "").split("?");
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   const q = new URLSearchParams(query);
   if (parts[0] === "ns" && parts[1]) {
-    if (parts[2] === "x" && parts[3]) return { page: "execution", ns: parts[1], id: parts[3] };
+    if (parts[2] === "x" && parts[3]) {
+      const rec = decodeRec(rawRec(query));
+      return rec ? { page: "execution", ns: parts[1], id: parts[3], rec } : { page: "execution", ns: parts[1], id: parts[3] };
+    }
     return { page: "namespace", ns: parts[1], flow: q.get("flow") ?? undefined, status: q.get("status") ?? undefined };
   }
   return { page: "overview" };
@@ -65,15 +74,21 @@ export const href = {
     const s = p.toString();
     return `#/ns/${encodeURIComponent(ns)}${s ? "?" + s : ""}`;
   },
-  execution: (ns: string, id: string) => `#/ns/${encodeURIComponent(ns)}/x/${encodeURIComponent(id)}`,
+  execution: (ns: string, id: string, rec?: Attempt) =>
+    `#/ns/${encodeURIComponent(ns)}/x/${encodeURIComponent(id)}${rec ? "?rec=" + encodeRec(rec) : ""}`,
 };
 
 export function useRoute(): Route {
   const [route, setRoute] = useState(() => parseRoute(location.hash));
+  const path = useRef(location.hash.split("?")[0]);
   useEffect(() => {
     const on = () => {
       setRoute(parseRoute(location.hash));
-      window.scrollTo({ top: 0 });
+      // A new page starts at its top; a new ?rec= on the same page scrolls
+      // to its record instead.
+      const p = location.hash.split("?")[0];
+      if (p !== path.current) window.scrollTo({ top: 0 });
+      path.current = p;
     };
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);

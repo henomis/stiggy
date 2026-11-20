@@ -125,16 +125,18 @@ function FieldRow({ f }: { f: Field }) {
   );
 }
 
-/** Long text, folded after a few lines. */
-export function Prose({ text, lines = 6 }: { text: string; lines?: number }) {
-  const [open, setOpen] = useState(false);
+/** Long text, folded after a few lines; open set shows it all (as after
+ * "Show all"), so the browser's find sees every line. */
+export function Prose({ text, lines = 6, open: all }: { text: string; lines?: number; open?: boolean }) {
+  const [mine, setOpen] = useState(false);
+  const open = all || mine;
   const many = text.split("\n").length > lines || text.length > 600;
   return (
     <div className="prose-wrap">
       <div className={`prose${many && !open ? " folded" : ""}`} style={{ ["--lines" as string]: lines }}>
         {text}
       </div>
-      {many && (
+      {many && !all && (
         <button type="button" className="link" onClick={() => setOpen(!open)}>
           {open ? "Show less" : "Show all"}
         </button>

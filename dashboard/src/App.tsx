@@ -41,7 +41,9 @@ export function App() {
         )}
         {route.page === "overview" && ov.data && <Overview data={ov.data} refresh={ov.refresh} />}
         {route.page === "namespace" && <NamespacePage ns={route.ns} flow={route.flow} status={route.status} overview={ov.data} />}
-        {route.page === "execution" && <ExecutionPage ns={route.ns} id={route.id} readOnly={ov.data?.read_only ?? true} />}
+        {route.page === "execution" && (
+          <ExecutionPage key={route.ns + "/" + route.id} ns={route.ns} id={route.id} rec={route.rec} readOnly={ov.data?.read_only ?? true} />
+        )}
       </main>
     </div>
   );
