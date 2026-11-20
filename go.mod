@@ -98,3 +98,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
+
+replace github.com/henomis/packtrail => ../packtrail

@@ -143,7 +143,7 @@ func TestProjectFile(t *testing.T) {
 
 func TestPage(t *testing.T) {
 	code, body := call(t, design.New(registry.New()).Handler(), http.MethodGet, "/", "")
-	if code != http.StatusOK || !strings.Contains(body, "make ui") {
+	if code != http.StatusOK || !strings.Contains(body, "make design") {
 		t.Fatalf("placeholder: %d %s", code, body)
 	}
 
@@ -152,7 +152,7 @@ func TestPage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, body = call(t, design.New(registry.New(), design.WithUI(dir)).Handler(), http.MethodGet, "/", "")
+	code, body = call(t, design.New(registry.New(), design.WithUI(os.DirFS(dir))).Handler(), http.MethodGet, "/", "")
 	if code != http.StatusOK || body != "designer" {
 		t.Fatalf("ui: %d %s", code, body)
 	}

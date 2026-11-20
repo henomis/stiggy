@@ -1,4 +1,4 @@
-// The API of `stiggy design` (internal/design).
+// The API of `stiggy-design` (internal/design).
 
 import type { Problem, Project } from "./project";
 
@@ -41,7 +41,7 @@ export async function catalog(): Promise<Catalog> {
   return (await ok(await fetch("/api/catalog"))).json();
 }
 
-/** The project file given to `stiggy design`, or null when there is none. */
+/** The project file given to `stiggy-design`, or null when there is none. */
 export async function readProject(): Promise<ProjectFile | null> {
   const res = await fetch("/api/project");
   if (res.status === 404) return null;
