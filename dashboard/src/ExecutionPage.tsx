@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import * as api from "./api";
-import { Fields, Meter, Prose, Section, ShareBars, StatusMark } from "./Bits";
+import { Fields, Meter, Output, Prose, Section, ShareBars, StatusMark } from "./Bits";
 import { ago, clock, duration, money, plural, preview, tokens } from "./format";
 import { href, parseRoute, useNow, usePoll } from "./hooks";
 import { LiveSteps } from "./LiveSteps";
@@ -191,7 +191,7 @@ export function ExecutionPage({ ns, id, readOnly, rec }: { ns: string; id: strin
           </Section>
         ) : (
           <Section title="Output">
-            <Fields fields={e.output} empty="This execution returned nothing." />
+            <Output fields={e.output} empty="This execution returned nothing." />
           </Section>
         )}
       </div>

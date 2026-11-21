@@ -410,6 +410,12 @@ func TestRecords(t *testing.T) {
 		t.Fatalf("story entries: write %+v, research %+v", w, r)
 	}
 
+	// The recorded attempt shows its input; the other, none.
+	if w.Input == nil || !strings.Contains(w.Input.Text, `Output of step "research"`) || w.Input.Missing != "" || w.Input.Size != len(w.Input.Text) || w.Input.Cut ||
+		r.Input != nil {
+		t.Fatalf("inputs: write %+v, research %+v", w.Input, r.Input)
+	}
+
 	path := func(e dashboard.Entry) string {
 		return fmt.Sprintf("/api/ns/newsroom/executions/%s/records?node=%s&key=%s&generation=%d&attempt=%d",
 			id, e.Node, e.Key, e.Generation, e.Attempt)

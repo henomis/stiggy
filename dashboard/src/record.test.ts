@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Entry, RecordCall, RecordRun, RecordToolCall } from "./api";
+import type { Entry, Field, RecordCall, RecordRun, RecordToolCall, Usage } from "./api";
 import { href, parseRoute } from "./hooks";
 import { argsText } from "./Record";
 import { entryKey } from "./Story";
@@ -12,8 +12,12 @@ import {
   ledgerParts,
   matchChildren,
   siblings,
+  detailsLabel,
+  plainText,
+  sameInputs,
   spanAttempt,
-  toggleLabel,
+  stepPrompt,
+  unrecordedSteps,
 } from "./recordNav";
 
 describe("argsText", () => {
@@ -50,14 +54,104 @@ const usage = { input_tokens: 1, output_tokens: 1 };
 const call = (x: Partial<RecordCall> = {}): RecordCall => ({ usage, message_offset: 0, ...x });
 const run = (x: Partial<RecordRun> = {}): RecordRun => ({ agent: "a", usage, ...x });
 
-describe("toggleLabel", () => {
-  it("names the record by the outcome", () => {
-    expect(toggleLabel("done", false)).toBe("How it got this answer");
-    expect(toggleLabel("cached", false)).toBe("How it got this answer");
-    expect(toggleLabel("failed", false)).toBe("How it failed");
-    expect(toggleLabel("retry", false)).toBe("How it failed");
-    expect(toggleLabel("waiting", false)).toBe("How it got to this question");
-    expect(toggleLabel("failed", true)).toBe("Hide");
+describe("detailsLabel", () => {
+  const u = (x: Partial<Usage>): Usage => ({ tokens_in: 1, tokens_out: 1, cost_usd: 0, ...x });
+  it("says why to open it, by the outcome", () => {
+    expect(detailsLabel("failed", u({ llm_calls: 5 }), false)).toBe("Details: how it failed");
+    expect(detailsLabel("retry", undefined, false)).toBe("Details: how it failed");
+    expect(detailsLabel("waiting", u({ tool_calls: 3 }), false)).toBe("Details: how it got to this question");
+    expect(detailsLabel("failed", undefined, true)).toBe("Hide details");
+    expect(detailsLabel("done", u({ llm_calls: 3 }), true)).toBe("Hide details");
+  });
+  it("counts the calls of a long loop", () => {
+    expect(detailsLabel("done", u({ llm_calls: 18, tool_calls: 22, tool_errors: 2 }), false)).toBe(
+      "Details: 18 model calls, 22 tool calls (2 failed)",
+    );
+    expect(detailsLabel("done", u({ llm_calls: 1, tool_calls: 1 }), false)).toBe("Details: 1 model call, 1 tool call");
+    expect(detailsLabel("cached", u({ llm_calls: 2 }), false)).toBe("Details: 2 model calls");
+  });
+  it("names the system prompt of a single call", () => {
+    expect(detailsLabel("done", u({ llm_calls: 1 }), false)).toBe("Details: system prompt");
+    expect(detailsLabel("done", undefined, false)).toBe("Details: system prompt");
+    expect(detailsLabel("done", u({ llm_calls: 1 }), false, "remote")).toBe("Details");
+  });
+});
+
+describe("plainText", () => {
+  const text = (key: string, t: string, kind: Field["kind"] = "text"): Field => ({ key, kind, text: t });
+  it("reads a plain answer", () => {
+    expect(plainText([text("text", "hello")])).toBe("hello");
+    expect(plainText([text("text", "")])).toBe("");
+  });
+  it("leaves anything else as fields", () => {
+    expect(plainText(undefined)).toBeUndefined();
+    expect(plainText([])).toBeUndefined();
+    expect(plainText([text("summary", "hello")])).toBeUndefined();
+    expect(plainText([text("text", "3", "number")])).toBeUndefined();
+    expect(plainText([text("text", "a"), text("score", "3", "number")])).toBeUndefined();
+  });
+});
+
+describe("stepPrompt", () => {
+  it("is the last user message of the first call", () => {
+    const r = run({
+      calls: [
+        {
+          usage,
+          message_offset: 0,
+          messages: [
+            { role: "user", text: "earlier" },
+            { role: "assistant", text: "reply" },
+            { role: "user", text: "now" },
+          ],
+        },
+        { usage, message_offset: 3, messages: [{ role: "user", text: "later" }] },
+      ],
+    });
+    expect(stepPrompt(r)).toEqual({ msg: { role: "user", text: "now" }, index: 2 });
+    expect(stepPrompt(run())).toBeUndefined();
+  });
+});
+
+describe("sameInputs", () => {
+  const att = (attempt: number, text: string, x: Partial<Entry> = {}): Entry => ({
+    kind: "step", node: "w", key: "w", generation: 1, attempt, recorded: true, time: "2026-01-01T00:00:00Z",
+    input: { text, size: text.length }, ...x,
+  });
+  it("marks a retry that put the same prompt", () => {
+    const a1 = att(1, "p", { outcome: "retry" });
+    const a2 = att(2, "p", { outcome: "retry" });
+    const a3 = att(3, "q");
+    const m = sameInputs([a1, a2, a3]);
+    expect(m.get(a2)).toBe(1);
+    expect(m.has(a1)).toBe(false);
+    expect(m.has(a3)).toBe(false);
+  });
+  it("keeps visits and steps apart", () => {
+    const a = att(1, "p");
+    const b = att(1, "p", { generation: 2 });
+    const c = att(2, "p", { node: "x", key: "x" });
+    expect(sameInputs([a, b, c]).size).toBe(0);
+  });
+  it("needs both texts", () => {
+    const a = att(1, "", { input: { text: "", size: 0, missing: "not_kept" } });
+    const b = att(2, "", { input: { text: "", size: 0, missing: "not_kept" } });
+    expect(sameInputs([a, b]).size).toBe(0);
+  });
+});
+
+describe("unrecordedSteps", () => {
+  const step = (node: string, x: Partial<Entry>): Entry => ({ kind: "step", node, time: "2026-01-01T00:00:00Z", outcome: "done", ...x });
+  it("counts the agent and remote steps without a record, once each", () => {
+    const story = [
+      step("a", { role: "agent" }),
+      step("a", { role: "agent", attempt: 2 }),
+      step("r", { role: "remote" }),
+      step("t", { role: "activity" }),
+      step("k", { role: "agent", recorded: true }),
+      step("c", { role: "agent", outcome: "cached" }),
+    ];
+    expect(unrecordedSteps(story)).toBe(2);
   });
 });
 
@@ -124,6 +218,9 @@ describe("answerPlan", () => {
   });
   it("leaves it to the tool card that shows it", () => {
     expect(answerPlan("tool", r).kind).toBe("none");
+  });
+  it("leaves it to the story entry that shows it as text", () => {
+    expect(answerPlan("text", r).kind).toBe("none");
   });
   it("shows nothing without an answer", () => {
     expect(answerPlan(undefined, run({ calls: [call({ error: "x" })] })).kind).toBe("none");

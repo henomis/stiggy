@@ -2656,3 +2656,104 @@ button.tl-bar:focus-visible {
   margin: 2px 0 0;
   font-size: 14px;
 }
+
+/* A step's box: what it was given, a hairline, what it answered. The
+ * input reads quieter; the output is the main thing. */
+
+.story-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.entry-box {
+  display: grid;
+  min-width: 0;
+}
+
+.box-sec {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.box-sec + .box-sec {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.box-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.box-body > button {
+  justify-self: start;
+  text-align: left;
+}
+
+.box-input .box-body {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.box-output .box-label {
+  color: var(--ink-2);
+}
+
+.box-error .box-label {
+  color: var(--carmine);
+}
+
+.box-error .entry-error {
+  margin-top: 0;
+}
+
+.box-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.link.box-more {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.link.box-more:hover {
+  color: var(--teal);
+}
+
+@media (max-width: 600px) {
+  /* Labels above what they name. */
+  .box-sec {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .prose.folded {
+    -webkit-line-clamp: var(--lines-phone, var(--lines));
+  }
+
+  .entry-box .fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .entry-box .field dd {
+    margin-bottom: 8px;
+  }
+
+  /* Details is a row of its own, big enough for a thumb. */
+  .link.rec-details {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 2px;
+    border-top: 1px solid var(--rule);
+  }
+}

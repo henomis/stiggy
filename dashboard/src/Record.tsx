@@ -14,9 +14,11 @@ import {
   defaultOpen,
   ledgerParts,
   matchChildren,
+  detailsLabel,
+  lastAnswer,
   recId,
+  stepPrompt,
   textBytes,
-  toggleLabel,
   type Attempt,
 } from "./recordNav";
 
@@ -66,26 +68,47 @@ function Fold({ summary, open: initial = false, className, children }: { summary
   );
 }
 
-const CUT_TITLE = "Only the start was kept (record_max_bytes)";
-const Cut = ({ dot }: { dot?: boolean }) => (
+export const CUT_TITLE = "Only the start was kept (record_max_bytes)";
+export const Cut = ({ dot }: { dot?: boolean }) => (
   <span className="rec-cutmark" title={CUT_TITLE}>
     {dot ? " · cut" : " (cut)"}
   </span>
 );
 
-/** The toggle of one attempt's record, and the record once loaded. */
+/** The record of an attempt, from the page's cache or fetched into it:
+ * the story's Input and Details share it. */
+export async function loadRecord(nav: RecordNav, at: Attempt): Promise<api.AttemptRecord> {
+  const rid = recId(at);
+  const kept = nav.cache.get(rid);
+  if (kept) return kept;
+  const r = await api.record(nav.ns, nav.id, at);
+  nav.cache.set(rid, r);
+  return r;
+}
+
+/** Where else the story entry shows the attempt's answer (see answerPlan). */
+export type ShownAs = "fields" | "text" | undefined;
+
+/** The Details link of one attempt, and its record once loaded. */
 export function RecordToggle({
   at,
   outcome,
+  usage,
+  role,
   siblings,
-  hasOutput,
+  shownAs,
+  promptAbove,
 }: {
   at: Attempt;
   outcome?: string;
+  usage?: api.Usage;
+  role?: string;
   /** The recorded attempts of the same step, this one among them. */
   siblings: Attempt[];
-  /** The story entry shows the answer as fields. */
-  hasOutput: boolean;
+  /** How the story entry shows the answer. */
+  shownAs: ShownAs;
+  /** The story entry shows the step prompt. */
+  promptAbove: boolean;
 }) {
   const nav = useContext(RecordNavContext)!;
   const rid = recId(at);
@@ -100,19 +123,10 @@ export function RecordToggle({
 
   useEffect(() => {
     if (!open || rec) return;
-    const kept = nav.cache.get(rid);
-    if (kept) {
-      setRec(kept);
-      return;
-    }
     let live = true;
     setErr(undefined);
-    api
-      .record(nav.ns, nav.id, at)
-      .then((r) => {
-        nav.cache.set(rid, r);
-        if (live) setRec(r);
-      })
+    loadRecord(nav, at)
+      .then((r) => live && setRec(r))
       .catch((e: Error) => live && setErr({ status: e instanceof api.ApiError ? e.status : undefined, msg: e.message }));
     return () => {
       live = false;
@@ -135,8 +149,8 @@ export function RecordToggle({
 
   return (
     <div className="rec-toggle" ref={root}>
-      <button type="button" className="link" aria-expanded={open} aria-controls={panelId} onClick={() => nav.setOpen(at, !open)}>
-        {toggleLabel(outcome, open)}
+      <button type="button" className="link rec-details" aria-expanded={open} aria-controls={panelId} onClick={() => nav.setOpen(at, !open)}>
+        {detailsLabel(outcome, usage, open, role)}
       </button>
       {open && (
         <div id={panelId} className="rec" role="region" aria-label={`Record of ${at.node}, attempt ${at.attempt}`}>
@@ -163,7 +177,7 @@ export function RecordToggle({
           </div>
           {rec ? (
             <Expand.Provider value={ex}>
-              <AttemptView a={rec} hasOutput={hasOutput} />
+              <AttemptView a={rec} shownAs={shownAs} promptAbove={promptAbove} />
             </Expand.Provider>
           ) : err?.status === 404 ? (
             <p className="muted rec-state">No record was kept for this attempt.</p>
@@ -250,7 +264,7 @@ function copyByHand(text: string): boolean {
   return ok;
 }
 
-function AttemptView({ a, hasOutput }: { a: api.AttemptRecord; hasOutput: boolean }) {
+function AttemptView({ a, shownAs, promptAbove }: { a: api.AttemptRecord; shownAs: ShownAs; promptAbove: boolean }) {
   if (a.too_large) {
     return (
       <div className="rec-run">
@@ -268,7 +282,7 @@ function AttemptView({ a, hasOutput }: { a: api.AttemptRecord; hasOutput: boolea
   return (
     <>
       {r.truncated && <p className="rec-cut">This record was cut to fit its size limit: items marked “cut” keep only their start.</p>}
-      <RunView run={r} top={r} traceURL={a.trace_url} shownAs={hasOutput ? "fields" : undefined} path={[r.agent]} />
+      <RunView run={r} top={r} traceURL={a.trace_url} shownAs={shownAs} promptAbove={promptAbove} path={[r.agent]} />
     </>
   );
 }
@@ -306,13 +320,16 @@ function RunView({
   top,
   traceURL,
   shownAs,
+  promptAbove,
   path,
 }: {
   run: api.RecordRun;
   top?: api.StepRecord;
   traceURL?: string;
   /** Where else the run's answer shows (see answerPlan). */
-  shownAs?: "fields" | "tool";
+  shownAs?: "fields" | "text" | "tool";
+  /** The story entry shows the run's step prompt: it is not repeated. */
+  promptAbove?: boolean;
   /** The agents from the step's own down to this run. */
   path: string[];
 }) {
@@ -324,6 +341,8 @@ function RunView({
   const error = run.error ?? failedCall?.error;
   const plan = answerPlan(shownAs, run);
   const sent = calls[0]?.messages ?? [];
+  const above = promptAbove ? stepPrompt(run)?.index : undefined;
+  const aboveAnswer = shownAs === "text" ? lastAnswer(run)?.text : undefined;
   const after: string[] = [];
   if (run.stop_reason && run.stop_reason !== "final") after.push(STOP[run.stop_reason] ?? run.stop_reason);
   if (run.iterations && run.iterations > 1) after.push(`${plural(run.iterations, "iteration")}${run.max_iterations ? ` of ${run.max_iterations}` : ""}`);
@@ -394,12 +413,23 @@ function RunView({
       )}
       {sent.length > 0 && (
         <ul className="rec-msgs rec-sent">
-          {sent.map((m, i) => (
-            <MessageView key={i} m={m} user={remote ? "Asked" : "Sent"} />
-          ))}
+          {sent.map((m, i) =>
+            i === above ? (
+              <li key={i} className="rec-msg r-user">
+                <span className="rec-role">{remote ? "Asked" : "Sent"}</span>
+                <span className="muted">Prompt shown above</span>
+              </li>
+            ) : (
+              <MessageView key={i} m={m} user={remote ? "Asked" : "Sent"} />
+            ),
+          )}
         </ul>
       )}
-      {remote && <p className="rec-note">Its own prompt and tool calls stay where it is served.</p>}
+      {remote && (
+        <p className="rec-note">
+          {shownAs === "text" ? "The answer is shown above. " : ""}Its own prompt and tool calls stay where it is served.
+        </p>
+      )}
       {!remote && calls.length === 1 && (calls[0].tool_calls ?? []).length > 0 && (
         <ul className="rec-tool-calls">
           {calls[0].tool_calls!.map((t, i) => (
@@ -407,7 +437,9 @@ function RunView({
           ))}
         </ul>
       )}
-      {!remote && calls.length >= 2 && <Ledger run={run} byCall={byCall} path={path} answer={plan.kind === "none" ? undefined : plan.text} />}
+      {!remote && calls.length >= 2 && (
+        <Ledger run={run} byCall={byCall} path={path} answer={plan.kind === "none" ? aboveAnswer : plan.text} above={!!aboveAnswer} />
+      )}
       {rest.map((ch, i) => (
         <RunView key={i} run={ch} path={[...path, ch.agent]} />
       ))}
@@ -464,7 +496,20 @@ function ToolChips({ ts }: { ts: api.RecordToolCall[] }) {
 
 /** The model calls of a run, one line each; a line opens on what the call
  * was given, what it answered and the tools it called. */
-function Ledger({ run, byCall, path, answer }: { run: api.RecordRun; byCall: Map<api.RecordToolCall, api.RecordRun>; path: string[]; answer?: string }) {
+function Ledger({
+  run,
+  byCall,
+  path,
+  answer,
+  above,
+}: {
+  run: api.RecordRun;
+  byCall: Map<api.RecordToolCall, api.RecordRun>;
+  path: string[];
+  answer?: string;
+  /** The answer is shown in the story entry, not below. */
+  above?: boolean;
+}) {
   const calls = run.calls ?? [];
   const parts = ledgerParts(calls);
   return (
@@ -523,7 +568,7 @@ function Ledger({ run, byCall, path, answer }: { run: api.RecordRun; byCall: Map
                 )}
                 {c.response &&
                   (last && answer === c.response ? (
-                    <p className="rec-note">Its answer is shown below.</p>
+                    <p className="rec-note">Its answer is shown {above ? "above" : "below"}.</p>
                   ) : (
                     <div className="rec-response">
                       <span className="rec-role">

@@ -268,6 +268,23 @@ export interface Entry {
   generation?: number;
   /** The attempt stored a record of what it did (fetch it with record()). */
   recorded?: boolean;
+  /** The start of the prompt the attempt put to its agent, from its record. */
+  input?: InputPreview;
+}
+
+/** A step's prompt, as the story shows it before its record is fetched. */
+export interface InputPreview {
+  /** The prompt, cut to 600 bytes. */
+  text: string;
+  /** Bytes of the prompt as the record keeps it. */
+  size: number;
+  /** text is shorter than the prompt. */
+  cut?: boolean;
+  /** Messages before the prompt in the first call: memory, a transcript. */
+  memory?: number;
+  /** Why there is no text: the record was too large to keep, or was cut
+   * (record_max_bytes) so far the prompt is gone. */
+  missing?: "too_large" | "not_kept";
 }
 
 // An attempt's record (agentrun.Record, mirrored in internal/dashboard).

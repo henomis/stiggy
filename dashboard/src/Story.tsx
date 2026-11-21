@@ -1,13 +1,16 @@
 // The whole execution, top to bottom: every agent's answer, every human
 // reply, every routing decision, in the order they happened.
 
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
 import type * as api from "./api";
-import { Fields, Prose } from "./Bits";
-import { RecordNavContext, RecordToggle } from "./Record";
+import { Fields, Output, Prose } from "./Bits";
+import { Cut, loadRecord, RecordNavContext, RecordToggle } from "./Record";
 import { clock, duration, money, plural, tokens } from "./format";
-import { entryAttempt, recId, type Attempt } from "./recordNav";
+import { bytes, entryAttempt, plainText, recId, sameInputs, stepPrompt, textBytes, unrecordedSteps, type Attempt } from "./recordNav";
+
+/** Where the guide explains record. */
+const RECORD_GUIDE = "https://simonevellei.com/stiggy/guide.html#record";
 
 interface Props {
   story: api.Entry[];
@@ -45,6 +48,8 @@ export function Story({ story, until, selected, focus, onSelect, onClearFocus }:
     }
     return m;
   }, [story]);
+  const same = useMemo(() => sameInputs(story), [story]);
+  const unrecorded = useMemo(() => unrecordedSteps(story), [story]);
 
   // A record asked to be shown that the filter hides: show everything.
   const target = nav?.target;
@@ -76,12 +81,23 @@ export function Story({ story, until, selected, focus, onSelect, onClearFocus }:
         )}
       </div>
       {focus && shown.length === 0 && <p className="muted">{focus} has not run yet.</p>}
+      {unrecorded > 0 && (
+        <p className="muted story-note">
+          {unrecorded === 1
+            ? "1 agent step keeps no record, so its input isn't shown."
+            : `${unrecorded} agent steps keep no record, so their input isn't shown.`}{" "}
+          <a href={RECORD_GUIDE} target="_blank" rel="noreferrer">
+            See record
+          </a>
+        </p>
+      )}
       <ol className="story-list">
         {shown.map((e, i) => (
           <StoryEntry
             key={entryKey(e, i)}
             e={e}
             attempts={attempts}
+            same={same.get(e)}
             future={until !== undefined && Date.parse(e.end ?? e.time) > until}
             selected={!!e.node && e.node === selected}
             onSelect={onSelect}
@@ -105,12 +121,15 @@ export function entryKey(e: api.Entry, i: number): string {
 function StoryEntry({
   e,
   attempts,
+  same,
   future,
   selected,
   onSelect,
 }: {
   e: api.Entry;
   attempts: Map<string, Attempt[]>;
+  /** The earlier attempt whose input this one repeats. */
+  same?: number;
   future: boolean;
   selected: boolean;
   onSelect: (n: string) => void;
@@ -145,7 +164,7 @@ function StoryEntry({
             <span className="entry-when">{clock(e.time)}</span>
           </div>
           {(e.error || e.text) && <Prose text={[e.text, e.error].filter(Boolean).join(": ")} lines={4} />}
-          {e.output && e.output.length > 0 && <Fields fields={e.output} empty="" />}
+          {e.output && e.output.length > 0 && <Output fields={e.output} />}
         </li>
       );
     case "human":
@@ -170,7 +189,7 @@ function StoryEntry({
         </li>
       );
     default:
-      return <StepEntry e={e} cls={cls} node={node} attempts={attempts} />;
+      return <StepEntry e={e} cls={cls} node={node} attempts={attempts} same={same} />;
   }
 }
 
@@ -202,7 +221,19 @@ const OUTCOME: Record<string, string> = {
   running: "is working",
 };
 
-function StepEntry({ e, cls, node, attempts }: { e: api.Entry; cls: string; node: React.ReactNode; attempts: Map<string, Attempt[]> }) {
+function StepEntry({
+  e,
+  cls,
+  node,
+  attempts,
+  same,
+}: {
+  e: api.Entry;
+  cls: string;
+  node: ReactNode;
+  attempts: Map<string, Attempt[]>;
+  same?: number;
+}) {
   const at = entryAttempt(e);
   const took = e.end ? Date.parse(e.end) - Date.parse(e.time) : 0;
   const u = e.usage;
@@ -215,6 +246,9 @@ function StepEntry({ e, cls, node, attempts }: { e: api.Entry; cls: string; node
   if (u?.tool_calls) facts.push(plural(u.tool_calls, "tool call") + (u.tool_errors ? `, ${u.tool_errors} failed` : ""));
 
   const verb = e.outcome === "waiting" ? (e.asks === "review" ? "asked for a review" : "asked a question") : OUTCOME[e.outcome ?? ""] ?? e.outcome;
+  const input = at ? e.input : undefined;
+  const output = e.output && e.output.length > 0 ? e.output : undefined;
+  const plain = plainText(output);
 
   return (
     <li className={cls}>
@@ -226,18 +260,29 @@ function StepEntry({ e, cls, node, attempts }: { e: api.Entry; cls: string; node
         <span className="entry-when">{clock(e.end ?? e.time)}</span>
       </div>
       {facts.length > 0 && <p className="entry-facts">{facts.join(", ")}</p>}
+      {(input || output || e.error) && (
+        <div className="entry-answer entry-box">
+          {input && at && (
+            <BoxSection label="Input" className="box-input">
+              <InputView input={input} at={at} same={same} />
+            </BoxSection>
+          )}
+          {output && (
+            <BoxSection label="Output" className="box-output">
+              <Output fields={output} />
+            </BoxSection>
+          )}
+          {e.error && (
+            <BoxSection label="Error" className="box-error">
+              <div className="entry-error">
+                <Prose text={e.error} lines={4} />
+              </div>
+            </BoxSection>
+          )}
+        </div>
+      )}
       {e.outcome === "waiting" && <div className="entry-asks"><Prose text={e.text || "No text."} lines={8} /></div>}
       {e.kept && <p className="entry-line">Kept the approved answer.</p>}
-      {e.output && e.output.length > 0 && (
-        <div className="entry-answer">
-          <Fields fields={e.output} empty="" />
-        </div>
-      )}
-      {e.error && (
-        <div className="entry-error">
-          <Prose text={e.error} lines={4} />
-        </div>
-      )}
       {e.next && e.outcome !== "waiting" && (
         <p className="entry-route">
           sent the work to <span className="route-chip">{e.next}</span>
@@ -248,10 +293,109 @@ function StepEntry({ e, cls, node, attempts }: { e: api.Entry; cls: string; node
           key={recId(at)}
           at={at}
           outcome={e.outcome}
+          usage={e.usage}
+          role={e.role}
           siblings={attempts.get(at.node + "\u0000" + at.key) ?? [at]}
-          hasOutput={!!e.output?.length}
+          shownAs={plain !== undefined ? "text" : output ? "fields" : undefined}
+          promptAbove={!!input && !input.missing}
         />
       )}
     </li>
+  );
+}
+
+/** A part of a step's box, named by its label. */
+function BoxSection({ label, className, children }: { label: string; className: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <div className={`box-sec ${className}`} role="group" aria-labelledby={id}>
+      <span className="rec-role box-label" id={id}>
+        {label}
+      </span>
+      <div className="box-body">{children}</div>
+    </div>
+  );
+}
+
+/** What the attempt put to its agent: the start of its prompt, the whole
+ * of it on request (from the record, through the page's cache), and what
+ * came before it in Details. */
+function InputView({ input, at, same }: { input: api.InputPreview; at: Attempt; same?: number }) {
+  const nav = useContext(RecordNavContext);
+  const [unfolded, setUnfolded] = useState(false);
+  const [full, setFull] = useState<{ text: string; cut: boolean }>();
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const details = () => nav?.show(at);
+
+  if (input.missing) {
+    return input.missing === "too_large" ? (
+      <p className="box-note">
+        Input too large to keep; see{" "}
+        <button type="button" className="link" onClick={details}>
+          Details
+        </button>
+      </p>
+    ) : (
+      <p className="box-note">Input not kept (record_max_bytes)</p>
+    );
+  }
+
+  if (same && !unfolded) {
+    return (
+      <p className="box-note">
+        Same as attempt {same}.{" "}
+        <button type="button" className="link" onClick={() => setUnfolded(true)}>
+          Show it
+        </button>
+      </p>
+    );
+  }
+
+  // The preview stops short of a longer prompt the record keeps.
+  const more = !!input.cut && input.size > textBytes(input.text);
+  const load = () => {
+    if (!nav) return;
+    setState("loading");
+    loadRecord(nav, at)
+      .then((r) => {
+        const p = r.record ? stepPrompt(r.record)?.msg : undefined;
+        if (!p?.text) throw new Error("no prompt");
+        setFull({ text: p.text, cut: !!p.truncated });
+        setState("idle");
+      })
+      .catch(() => setState("error"));
+  };
+
+  return (
+    <>
+      {full ? (
+        <Prose key="full" text={full.text} lines={3} phoneLines={2} initial />
+      ) : (
+        <Prose
+          text={input.text || "(empty)"}
+          lines={3}
+          phoneLines={2}
+          more={more && nav ? { label: state === "loading" ? "Loading…" : `Show all (${bytes(input.size)})`, onClick: load, busy: state === "loading" } : undefined}
+        />
+      )}
+      {(full ? full.cut : input.cut && !more) && (
+        <span className="box-note">
+          <Cut />
+        </span>
+      )}
+      {state === "error" && (
+        <p className="box-note">
+          <span className="entry-error">Could not load the full input.</span>{" "}
+          <button type="button" className="link" onClick={load}>
+            Try again
+          </button>
+        </p>
+      )}
+      {!!input.memory && (
+        <button type="button" className="link box-more" onClick={details}>
+          + {plural(input.memory, "earlier message")}
+        </button>
+      )}
+    </>
   );
 }

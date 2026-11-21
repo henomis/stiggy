@@ -66,7 +66,8 @@ type Server struct {
 	known   []string
 	knownAt time.Time
 
-	usage usageCache
+	usage   cache[Usage]
+	preview cache[*InputPreview]
 }
 
 // Option configures a [Server].
@@ -108,7 +109,7 @@ func New(nc *nats.Conn, opts ...Option) *Server {
 		opt(s)
 	}
 
-	s.usage.m = map[string]Usage{}
+	s.preview.max = previewCacheMax
 
 	return s
 }
@@ -253,26 +254,33 @@ type Agent struct {
 	Instances int    `json:"instances"`
 }
 
-// usageCache keeps the usage of ended executions, which never changes.
-type usageCache struct {
-	mu sync.Mutex
-	m  map[string]Usage
+// cache keeps what never changes once read: the usage of ended executions,
+// the input previews of records. With max set, it starts over past max
+// entries.
+type cache[V any] struct {
+	mu  sync.Mutex
+	m   map[string]V
+	max int
 }
 
-func (u *usageCache) get(key string) (Usage, bool) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+func (c *cache[V]) get(key string) (V, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	v, ok := u.m[key]
+	v, ok := c.m[key]
 
 	return v, ok
 }
 
-func (u *usageCache) put(key string, v Usage) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+func (c *cache[V]) put(key string, v V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	u.m[key] = v
+	if c.m == nil || (c.max > 0 && len(c.m) >= c.max) {
+		c.m = map[string]V{}
+	}
+
+	c.m[key] = v
 }
 
 // spa serves the built page, falling back to index.html for the page's own

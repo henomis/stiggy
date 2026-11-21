@@ -2,6 +2,7 @@
 // how it is named in a link, what opens by default and what is shown once.
 
 import type * as api from "./api";
+import { plural } from "./format";
 
 /** One attempt of a step: what its record is fetched by. */
 export type Attempt = { node: string; key: string; generation: number; attempt: number };
@@ -69,18 +70,73 @@ export function spanAttempt(story: api.Entry[], s: api.Span): Attempt | undefine
   return best;
 }
 
-/** The record toggle's words, by the attempt's outcome. */
-export function toggleLabel(outcome: string | undefined, open: boolean): string {
-  if (open) return "Hide";
+/** The words of an attempt's Details link, from what the story entry
+ * already knows: why to open it, by the outcome, or what it holds. */
+export function detailsLabel(outcome: string | undefined, usage: api.Usage | undefined, open: boolean, role?: string): string {
+  if (open) return "Hide details";
   switch (outcome) {
     case "failed":
     case "retry":
-      return "How it failed";
+      return "Details: how it failed";
     case "waiting":
-      return "How it got to this question";
-    default:
-      return "How it got this answer";
+      return "Details: how it got to this question";
   }
+  const llm = usage?.llm_calls ?? 0;
+  const tools = usage?.tool_calls ?? 0;
+  if (llm > 1 || tools > 0) {
+    const parts = [];
+    if (llm > 0) parts.push(plural(llm, "model call"));
+    if (tools > 0) parts.push(plural(tools, "tool call") + (usage?.tool_errors ? ` (${usage.tool_errors} failed)` : ""));
+    return `Details: ${parts.join(", ")}`;
+  }
+  // A remote's system prompt stays where it is served.
+  return role === "remote" ? "Details" : "Details: system prompt";
+}
+
+/** The text of an output that is a plain answer: one text field named
+ * "text", what an agent without an answer format returns. */
+export function plainText(fields: api.Field[] | undefined): string | undefined {
+  if (fields?.length !== 1) return undefined;
+  const f = fields[0];
+  return f.key === "text" && f.kind === "text" ? f.text : undefined;
+}
+
+/** The step prompt of a run: the last user message of its first call
+ * (memory and a transcript come before it), and how many come before. */
+export function stepPrompt(run: api.RecordRun): { msg: api.RecordMessage; index: number } | undefined {
+  const msgs = run.calls?.[0]?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === "user") return { msg: msgs[i], index: i };
+  return undefined;
+}
+
+/** The attempts whose input is the one of the attempt before them, of the
+ * same step and visit (a retry put the same prompt): the number of that
+ * earlier attempt, by entry. */
+export function sameInputs(story: api.Entry[]): Map<api.Entry, number> {
+  const out = new Map<api.Entry, number>();
+  const last = new Map<string, api.Entry>();
+  for (const e of story) {
+    if (e.kind !== "step" || !e.input || e.input.missing) continue;
+    const k = [e.node, e.key, e.generation].join("\u0000");
+    const prev = last.get(k);
+    if (prev?.input && prev.attempt && prev.attempt !== e.attempt && prev.input.text === e.input.text && prev.input.size === e.input.size) {
+      out.set(e, prev.attempt);
+    }
+    last.set(k, e);
+  }
+  return out;
+}
+
+/** How many agent and remote steps of the story keep no record, so the
+ * story cannot show their input. A cached answer keeps none either way. */
+export function unrecordedSteps(story: api.Entry[]): number {
+  const nodes = new Set<string>();
+  for (const e of story) {
+    if (e.kind === "step" && (e.role === "agent" || e.role === "remote") && !e.recorded && e.outcome !== "cached" && e.outcome !== "running") {
+      nodes.add(e.node ?? "");
+    }
+  }
+  return nodes.size;
 }
 
 /** Which nested run each tool call started: children are matched, in
@@ -144,16 +200,18 @@ export function lastAnswer(run: api.RecordRun): { text: string; cut: boolean } |
 
 /**
  * How a run's answer is shown, by where else it already is: "fields" (the
- * story entry shows it as fields), "tool" (the tool card that started the
- * run shows it as the result), or nowhere. Shown once: folded as raw when
- * the fields have it, left out when the tool card has it, open otherwise.
+ * story entry shows it as fields), "text" (the story entry shows it as
+ * text: a plain answer), "tool" (the tool card that started the run shows
+ * it as the result), or nowhere. Shown once: folded as raw when the fields
+ * have it, left out when the entry's text or the tool card has it, open
+ * otherwise.
  */
 export function answerPlan(
-  shownAs: "fields" | "tool" | undefined,
+  shownAs: "fields" | "text" | "tool" | undefined,
   run: api.RecordRun,
 ): { kind: "raw" | "open" | "none"; text: string; cut: boolean } {
   const a = lastAnswer(run);
-  if (!a || shownAs === "tool") return { kind: "none", text: "", cut: false };
+  if (!a || shownAs === "tool" || shownAs === "text") return { kind: "none", text: "", cut: false };
   return { kind: shownAs === "fields" ? "raw" : "open", ...a };
 }
 
