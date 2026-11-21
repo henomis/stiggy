@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { ago, duration, money, preview, shortId, tokens } from "./format";
+import { ago, clock, duration, money, preview, shortId, tokens } from "./format";
 import { layoutTrail } from "./trail";
+
+describe("clock", () => {
+  const now = Date.parse("2026-11-20T12:00:00");
+  it("shows the time alone for today", () => {
+    expect(clock("2026-11-20T09:05:07", now)).toMatch(/^\d{2}\D\d{2}\D\d{2}/);
+  });
+  it("adds the date for another day", () => {
+    expect(clock("2026-11-18T09:05:07", now)).toMatch(/18.*, \d{2}\D\d{2}\D\d{2}|Nov.*18/);
+  });
+});
 
 describe("format", () => {
   it("abbreviates tokens", () => {
@@ -32,7 +42,8 @@ describe("format", () => {
     const now = Date.parse("2026-11-20T12:00:00Z");
     expect(ago("2026-11-20T11:59:50Z", now)).toBe("just now");
     expect(ago("2026-11-20T11:56:00Z", now)).toBe("4m ago");
-    expect(ago("2026-11-19T10:00:00Z", now)).toBe("yesterday");
+    expect(ago("2026-11-19T10:00:00Z", now)).toMatch(/^yesterday, \d{2}\D\d{2}\D\d{2}/);
+    expect(ago("2026-11-10T10:00:00Z", now)).toMatch(/2026.*\d{2}\D\d{2}\D\d{2}/);
   });
 
   it("previews fields in one line", () => {
