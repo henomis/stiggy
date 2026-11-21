@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Entry, Field, RecordCall, RecordRun, RecordToolCall, Usage } from "./api";
 import { href, parseRoute } from "./hooks";
 import { argsText } from "./Record";
-import { entryKey } from "./Story";
+import { entryKey, tokenFact } from "./Story";
 import {
   answerPlan,
   decodeRec,
@@ -266,5 +266,16 @@ describe("attempt siblings", () => {
     const a = spanAttempt(story, { node: "write", key: "write", attempt: 1, start: "2026-01-01T00:00:59Z", outcome: "done" });
     expect(a).toEqual({ node: "write", key: "write", generation: 2, attempt: 1 });
     expect(spanAttempt(story, { node: "write", key: "write", attempt: 3, start: "2026-01-01T00:00:04Z", outcome: "done" })).toBeUndefined();
+  });
+});
+
+describe("tokenFact", () => {
+  it("splits input and output", () => {
+    expect(tokenFact({ tokens_in: 458, tokens_out: 292, cost_usd: 0 })).toBe("458 in, 292 out tokens");
+  });
+  it("adds cached and reasoning shares when present", () => {
+    expect(tokenFact({ tokens_in: 12_300, tokens_out: 900, cache_read: 8_000, reasoning: 400, cost_usd: 0 })).toBe(
+      "12.3k in, 900 out, 8k cached, 400 reasoning tokens",
+    );
   });
 });

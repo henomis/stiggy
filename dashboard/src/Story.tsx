@@ -211,6 +211,14 @@ function StartInput({ fields }: { fields: api.Field[] }) {
   );
 }
 
+/** What a step spent: "458 in, 292 out tokens", with the cache and reasoning shares when it had any. */
+export function tokenFact(u: api.Usage): string {
+  const parts = [`${tokens(u.tokens_in)} in`, `${tokens(u.tokens_out)} out`];
+  if (u.cache_read) parts.push(`${tokens(u.cache_read)} cached`);
+  if (u.reasoning) parts.push(`${tokens(u.reasoning)} reasoning`);
+  return parts.join(", ") + " tokens";
+}
+
 const OUTCOME: Record<string, string> = {
   done: "answered",
   cached: "answered from cache",
@@ -241,7 +249,7 @@ function StepEntry({
   if (e.visit && e.visit > 1) facts.push(`visit ${e.visit}`);
   if (e.attempt && e.attempt > 1) facts.push(`attempt ${e.attempt}`);
   if (took) facts.push(duration(took));
-  if (u && (u.tokens_in || u.tokens_out)) facts.push(`${tokens(u.tokens_in + u.tokens_out)} tokens`);
+  if (u && (u.tokens_in || u.tokens_out)) facts.push(tokenFact(u));
   if (u?.cost_usd) facts.push(money(u.cost_usd));
   if (u?.tool_calls) facts.push(plural(u.tool_calls, "tool call") + (u.tool_errors ? `, ${u.tool_errors} failed` : ""));
 
