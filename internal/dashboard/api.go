@@ -625,7 +625,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		def, _ = c.Flow(ctx, st.Flow, st.FlowHash)
 	}
 
-	writeJSON(w, HistoryOf(evs, def))
+	writeJSON(w, historyOf(evs, def, s.previews(r.PathValue("ns"), id)))
 }
 
 func (s *Server) flowGraph(w http.ResponseWriter, r *http.Request) {
@@ -805,7 +805,7 @@ func httpError(w http.ResponseWriter, err error) {
 		code = http.StatusGatewayTimeout
 	}
 
-	writeStatus(w, code, map[string]string{"error": err.Error()})
+	writeMessage(w, code, err.Error())
 }
 
 // cleanPath is a request path made safe to join to a directory.

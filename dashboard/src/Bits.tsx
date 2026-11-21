@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 import type { Bucket, Field, Share, Status } from "./api";
 import { money, statusWord, tokens } from "./format";
+import { plainText } from "./recordNav";
 
 export function StatusMark({ status, label = true }: { status: Status | string; label?: boolean }) {
   return (
@@ -125,22 +126,57 @@ function FieldRow({ f }: { f: Field }) {
   );
 }
 
-/** Long text, folded after a few lines. */
-export function Prose({ text, lines = 6 }: { text: string; lines?: number }) {
-  const [open, setOpen] = useState(false);
-  const many = text.split("\n").length > lines || text.length > 600;
+/** Long text, folded after a few lines (phoneLines on a phone); open set
+ * shows it all (as after "Show all"), so the browser's find sees every
+ * line. With more, the text is the start of a longer one: its button asks
+ * for the rest instead of unfolding. */
+export function Prose({
+  text,
+  lines = 6,
+  phoneLines,
+  open: all,
+  initial = false,
+  more,
+}: {
+  text: string;
+  lines?: number;
+  phoneLines?: number;
+  open?: boolean;
+  /** Starts unfolded. */
+  initial?: boolean;
+  more?: { label: string; onClick: () => void; busy?: boolean };
+}) {
+  const [mine, setOpen] = useState(initial);
+  const open = all || mine;
+  const many = text.split("\n").length > Math.min(lines, phoneLines ?? lines) || text.length > 600;
+  const style = { ["--lines" as string]: lines, ...(phoneLines ? { ["--lines-phone" as string]: phoneLines } : {}) };
   return (
     <div className="prose-wrap">
-      <div className={`prose${many && !open ? " folded" : ""}`} style={{ ["--lines" as string]: lines }}>
+      <div className={`prose${(many || more) && !open ? " folded" : ""}`} style={style}>
         {text}
       </div>
-      {many && (
-        <button type="button" className="link" onClick={() => setOpen(!open)}>
-          {open ? "Show less" : "Show all"}
+      {more && !open ? (
+        <button type="button" className="link" disabled={more.busy} onClick={more.onClick}>
+          {more.label}
         </button>
+      ) : (
+        many &&
+        !all && (
+          <button type="button" className="link" onClick={() => setOpen(!open)}>
+            {open ? "Show less" : "Show all"}
+          </button>
+        )
       )}
     </div>
   );
+}
+
+/** A step's or an execution's output: a plain answer (one text field named
+ * "text") as text, anything else as labelled values. */
+export function Output({ fields, empty = "", lines = 8 }: { fields: Field[]; empty?: string; lines?: number }) {
+  const text = plainText(fields);
+  if (text !== undefined) return <Prose text={text || "(empty)"} lines={lines} />;
+  return <Fields fields={fields} empty={empty} />;
 }
 
 export function Section({ title, aside, children, className }: { title: string; aside?: ReactNode; children: ReactNode; className?: string }) {

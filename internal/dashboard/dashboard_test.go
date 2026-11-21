@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -38,7 +39,7 @@ namespace: newsroom
 models: {m: {provider: x}}
 agents:
   researcher: {model: m}
-  writer: {model: m}
+  writer: {model: m, record: full}
 flows:
   article:
     budget: {tokens_out: 100000}
@@ -375,4 +376,71 @@ func TestLive(t *testing.T) {
 	}
 
 	t.Fatalf("stream ended without the execution: %v", sc.Err())
+}
+
+// TestRecords checks the story marks the attempts that stored a record, and
+// the records endpoint answers one, and 404 for an attempt without one.
+func TestRecords(t *testing.T) {
+	h := start(t)
+	srv := httptest.NewServer(dashboard.New(h.Conn).Handler())
+	t.Cleanup(srv.Close)
+
+	id, err := h.Client.Start(ctxOf(t), "article", map[string]any{"topic": "ants"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, h, id, func(st *packtrail.State) bool { return st.Status == packtrail.StatusWaiting })
+
+	var hist dashboard.History
+	if code := call(t, srv, http.MethodGet, "/api/ns/newsroom/executions/"+id+"/history", "", &hist); code != http.StatusOK {
+		t.Fatalf("history: %d", code)
+	}
+
+	byNode := map[string]dashboard.Entry{}
+
+	for _, e := range hist.Story {
+		if e.Kind == dashboard.EntryStep {
+			byNode[e.Node] = e
+		}
+	}
+
+	w, r := byNode["write"], byNode["research"]
+	if !w.Recorded || r.Recorded || w.Key != "write" || w.Generation == 0 || w.Attempt != 1 {
+		t.Fatalf("story entries: write %+v, research %+v", w, r)
+	}
+
+	// The recorded attempt shows its input; the other, none.
+	if w.Input == nil || !strings.Contains(w.Input.Text, `Output of step "research"`) || w.Input.Missing != "" || w.Input.Size != len(w.Input.Text) || w.Input.Cut ||
+		r.Input != nil {
+		t.Fatalf("inputs: write %+v, research %+v", w.Input, r.Input)
+	}
+
+	path := func(e dashboard.Entry) string {
+		return fmt.Sprintf("/api/ns/newsroom/executions/%s/records?node=%s&key=%s&generation=%d&attempt=%d",
+			id, e.Node, e.Key, e.Generation, e.Attempt)
+	}
+
+	var got dashboard.AttemptRecord
+	if code := call(t, srv, http.MethodGet, path(w), "", &got); code != http.StatusOK {
+		t.Fatalf("records: %d", code)
+	}
+
+	var rec dashboard.Record
+	if err = json.Unmarshal(got.Record, &rec); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Outcome != packtrail.OutcomeInterrupted || got.Seq == 0 || got.Time.IsZero() || got.TooLarge != nil ||
+		rec.Agent != "writer" || rec.Level != "full" || len(rec.Calls) != 1 {
+		t.Fatalf("record = %+v, %+v", got, rec)
+	}
+
+	if code := call(t, srv, http.MethodGet, path(r), "", nil); code != http.StatusNotFound {
+		t.Fatalf("records of an attempt without one: %d, want 404", code)
+	}
+
+	if code := call(t, srv, http.MethodGet, "/api/ns/newsroom/executions/"+id+"/records?node=write", "", nil); code != http.StatusBadRequest {
+		t.Fatalf("records without an attempt: %d, want 400", code)
+	}
 }

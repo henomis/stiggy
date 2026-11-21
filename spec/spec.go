@@ -179,6 +179,60 @@ type Agent struct {
 	// step (delegation). Unlike routes, these calls are not
 	// durable: if the step fails, they run again with it.
 	Delegates []string `yaml:"delegates,omitempty" json:"delegates,omitempty"`
+	// Record keeps, with each attempt of the agent's steps, what it did, for
+	// the dashboard: [RecordOff] (the default), [RecordPrompt] or
+	// [RecordFull]. Records are stored in NATS with the execution's events,
+	// for its retention, and may contain user data.
+	Record string `yaml:"record,omitempty" json:"record,omitempty"`
+	// RecordMaxBytes caps the encoded size of one record; 0 means
+	// [DefaultRecordMaxBytes], and a cap under [MinRecordMaxBytes] is raised
+	// to it. A larger record keeps the start of its
+	// longest texts and is marked truncated.
+	RecordMaxBytes int `yaml:"record_max_bytes,omitempty" json:"record_max_bytes,omitempty"`
+}
+
+// Record levels of an agent (Agent.Record).
+const (
+	// RecordOff records nothing.
+	RecordOff = "off"
+	// RecordPrompt records the step's own agent run: system prompt, the
+	// messages of each model call, tools offered, response format, the
+	// answer, timing, usage, memory, stop reason and errors.
+	RecordPrompt = "prompt"
+	// RecordFull adds every tool call with its arguments and result, and
+	// the nested runs (delegates, sub-agents) as a tree.
+	RecordFull = "full"
+)
+
+// DefaultRecordMaxBytes is the cap of a record when Agent.RecordMaxBytes is
+// unset: 256 KiB.
+const DefaultRecordMaxBytes = 256 << 10
+
+// RecordLevel returns the agent's record level, RecordOff when unset.
+func (a *Agent) RecordLevel() string { return recordLevel(a.Record) }
+
+func recordLevel(s string) string {
+	if s == "" {
+		return RecordOff
+	}
+
+	return s
+}
+
+// MinRecordMaxBytes is the smallest cap of a record: room for the parts of
+// a record that are never cut (agent, ids, times, usage).
+const MinRecordMaxBytes = 1 << 10
+
+// RecordLimit returns the cap of one record, in bytes: RecordMaxBytes,
+// raised to MinRecordMaxBytes, or DefaultRecordMaxBytes when unset.
+func (a *Agent) RecordLimit() int { return recordLimit(a.RecordMaxBytes) }
+
+func recordLimit(n int) int {
+	if n > 0 {
+		return max(n, MinRecordMaxBytes)
+	}
+
+	return DefaultRecordMaxBytes
 }
 
 // Permissions decide which tool calls an agent may make, with rules written
@@ -350,7 +404,20 @@ type Remote struct {
 	Name  string `yaml:"name" json:"name"`
 	// Description tells agents that delegate to it what it does.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Record keeps, with each attempt of the remote's steps, the prompt sent
+	// and the answer, for the dashboard: [RecordOff] (the default),
+	// [RecordPrompt] or [RecordFull], which record the same: the remote's
+	// own model and tool calls run elsewhere.
+	Record string `yaml:"record,omitempty" json:"record,omitempty"`
+	// RecordMaxBytes caps one record, as Agent.RecordMaxBytes.
+	RecordMaxBytes int `yaml:"record_max_bytes,omitempty" json:"record_max_bytes,omitempty"`
 }
+
+// RecordLevel returns the remote's record level, RecordOff when unset.
+func (r *Remote) RecordLevel() string { return recordLevel(r.Record) }
+
+// RecordLimit returns the cap of one record of the remote, in bytes.
+func (r *Remote) RecordLimit() int { return recordLimit(r.RecordMaxBytes) }
 
 // Expose lists what a fleet serves on the NATS Agent Protocol.
 type Expose struct {

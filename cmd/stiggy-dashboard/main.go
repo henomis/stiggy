@@ -54,6 +54,8 @@ flags:
   -addr ADDR        address to listen on (default 127.0.0.1:7358)
   -ns a,b           namespaces to show (default: every namespace on the account)
   -read-only        only watch: do not answer waiting steps or cancel executions
+  -trace-url URL    link attempt records to their trace, {trace_id} in URL
+                    (default $STIGGY_TRACE_URL)
   -ui DIR           serve the page from DIR instead of the built-in one (development)
   -log-level LEVEL  debug, info, warn or error (default $STIGGY_LOG_LEVEL or info)
   -log-format FMT   text or json (default $STIGGY_LOG_FORMAT or text)
@@ -100,6 +102,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	addr := fs.String("addr", defaultAddr, "address to listen on")
 	ns := fs.String("ns", "", "comma-separated namespaces to show")
 	readOnly := fs.Bool("read-only", false, "do not answer waiting steps or cancel executions")
+	traceURL := fs.String("trace-url", os.Getenv("STIGGY_TRACE_URL"),
+		"link attempt records to their trace: a URL with {trace_id}")
 	ui := fs.String("ui", "", "serve the page from this directory instead of the built-in one")
 	showVersion := fs.Bool("version", false, "print the version")
 	logs := logflags.Register(fs, "STIGGY")
@@ -139,6 +143,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if *readOnly {
 		opts = append(opts, dashboard.WithReadOnly())
+	}
+
+	if *traceURL != "" {
+		opts = append(opts, dashboard.WithTraceURL(*traceURL))
 	}
 
 	fsys, err := webapp.Page(page, "web", *ui)

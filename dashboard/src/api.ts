@@ -263,6 +263,133 @@ export interface Entry {
   next?: string;
   error?: string;
   usage?: Usage;
+  /** With attempt, identify the attempt whose record to fetch. */
+  key?: string;
+  generation?: number;
+  /** The attempt stored a record of what it did (fetch it with record()). */
+  recorded?: boolean;
+  /** The start of the prompt the attempt put to its agent, from its record. */
+  input?: InputPreview;
+}
+
+/** A step's prompt, as the story shows it before its record is fetched. */
+export interface InputPreview {
+  /** The prompt, cut to 600 bytes. */
+  text: string;
+  /** Bytes of the prompt as the record keeps it. */
+  size: number;
+  /** text is shorter than the prompt. */
+  cut?: boolean;
+  /** Messages before the prompt in the first call: memory, a transcript. */
+  memory?: number;
+  /** Why there is no text: the record was too large to keep, or was cut
+   * (record_max_bytes) so far the prompt is gone. */
+  missing?: "too_large" | "not_kept";
+}
+
+// An attempt's record (agentrun.Record, mirrored in internal/dashboard).
+
+export interface RecordUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  reasoning_tokens?: number;
+  cost_usd?: number;
+}
+
+export interface RecordMessage {
+  role: string;
+  name?: string;
+  text?: string;
+  reasoning?: string;
+  tool_calls?: string[];
+  tool_call_id?: string;
+  tool_error?: boolean;
+  truncated?: boolean;
+}
+
+export interface RecordToolCall {
+  tool: string;
+  call_id?: string;
+  args?: string;
+  result?: string;
+  error?: string;
+  start?: string;
+  end?: string;
+  truncated?: boolean;
+}
+
+export interface RecordCall {
+  start?: string;
+  end?: string;
+  ttft_ms?: number;
+  iteration?: number;
+  compaction?: boolean;
+  model?: string;
+  finish_reason?: string;
+  usage: RecordUsage;
+  message_offset: number;
+  messages?: RecordMessage[];
+  response?: string;
+  response_truncated?: boolean;
+  error?: string;
+  tool_calls?: RecordToolCall[];
+}
+
+export interface RecordMemory {
+  retrieved: number;
+  saved: number;
+  retrieved_items?: RecordMessage[];
+  saved_items?: RecordMessage[];
+}
+
+export interface RecordRun {
+  agent: string;
+  via?: string;
+  tool?: string;
+  /** owner/name of the remote agent that ran the step (via "remote"). */
+  remote?: string;
+  model?: string;
+  trace_id?: string;
+  span_id?: string;
+  system?: string;
+  system_truncated?: boolean;
+  response_format?: string;
+  tools?: string[];
+  output?: string;
+  output_truncated?: boolean;
+  start?: string;
+  end?: string;
+  stop_reason?: string;
+  iterations?: number;
+  max_iterations?: number;
+  ttft_ms?: number;
+  memory?: RecordMemory;
+  usage: RecordUsage;
+  calls?: RecordCall[];
+  children?: RecordRun[];
+  error?: string;
+}
+
+export interface StepRecord extends RecordRun {
+  version: number;
+  level: "prompt" | "full" | string;
+  output_schema?: Record<string, unknown>;
+  truncated?: boolean;
+}
+
+export interface AttemptRecord {
+  key: string;
+  generation: number;
+  attempt: number;
+  outcome: "completed" | "failed" | "interrupted" | string;
+  seq: number;
+  time: string;
+  record?: StepRecord;
+  /** packtrail cut the record: its size and the start of its JSON. */
+  too_large?: { size: number; head: string };
+  trace_url?: string;
 }
 
 export interface History {
@@ -321,6 +448,10 @@ export const executions = (ns: string, q: { status?: string; flow?: string; limi
 export const execution = (ns: string, id: string, seq?: number) =>
   call<Execution>("GET", exec(ns, id) + (seq ? `?seq=${seq}` : ""));
 export const history = (ns: string, id: string) => call<History>("GET", exec(ns, id) + "/history");
+export const record = (ns: string, id: string, e: { node: string; key: string; generation: number; attempt: number }) => {
+  const p = new URLSearchParams({ node: e.node, key: e.key, generation: String(e.generation), attempt: String(e.attempt) });
+  return call<AttemptRecord>("GET", exec(ns, id) + `/records?${p}`);
+};
 export const flowGraph = (ns: string, flow: string) => call<Graph>("GET", `/api/ns/${enc(ns)}/flows/${enc(flow)}`);
 
 export interface Reply {

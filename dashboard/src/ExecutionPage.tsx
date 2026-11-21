@@ -1,13 +1,15 @@
 // One execution: where it is in its flow, what it spent, what its agents are
 // doing, and what waits for a human.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import * as api from "./api";
-import { Fields, Meter, Prose, Section, ShareBars, StatusMark } from "./Bits";
-import { ago, duration, money, plural, preview, tokens } from "./format";
-import { href, useNow, usePoll } from "./hooks";
+import { Fields, Meter, Output, Prose, Section, ShareBars, StatusMark } from "./Bits";
+import { ago, clock, duration, money, plural, preview, tokens } from "./format";
+import { href, parseRoute, useNow, usePoll } from "./hooks";
 import { LiveSteps } from "./LiveSteps";
+import { RecordNavContext, type RecordNav } from "./Record";
+import { entryAttempt, recId, type Attempt } from "./recordNav";
 import { Review } from "./Review";
 import { StepConfig } from "./StepConfig";
 import { Story } from "./Story";
@@ -17,7 +19,7 @@ import { Trail } from "./Trail";
 
 const OPEN = new Set(["running", "waiting"]);
 
-export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; readOnly: boolean }) {
+export function ExecutionPage({ ns, id, readOnly, rec }: { ns: string; id: string; readOnly: boolean; rec?: Attempt }) {
   const ex = usePoll(() => api.execution(ns, id), 2500, [ns, id]);
   const hist = usePoll(() => api.history(ns, id), 2500, [ns, id]);
   const now = useNow();
@@ -37,6 +39,21 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
     ex.refresh();
     hist.refresh();
   };
+
+  const nav = useRecordNav(ns, id, setFocus);
+  // A link to a record (?rec=): opened once the story it is in has loaded.
+  const pending = useRef<Attempt>();
+  useEffect(() => {
+    pending.current = rec;
+  }, [rec]);
+  const story = hist.data?.story;
+  useEffect(() => {
+    const p = pending.current;
+    if (!p || !story) return;
+    pending.current = undefined;
+    if (story.some((e) => entryAttempt(e) && recId(entryAttempt(e)!) === recId(p))) nav.show(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rec, story]);
 
   if (ex.error && !ex.data) {
     return (
@@ -61,7 +78,7 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
   const h = hist.data;
 
   return (
-    <>
+    <RecordNavContext.Provider value={nav}>
       <Crumbs ns={ns} flow={e.flow} />
       <header className="exec-head">
         <div>
@@ -139,6 +156,8 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
           node={node}
           config={node ? h?.steps[node]?.config : undefined}
           tl={h?.timeline}
+          story={h?.story}
+          onOpen={nav.show}
           now={seq !== undefined ? Date.parse(h?.moments.find((m) => m.seq === seq)?.time ?? live.updated) : now}
         />
         {h && (
@@ -172,13 +191,17 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
           </Section>
         ) : (
           <Section title="Output">
-            <Fields fields={e.output} empty="This execution returned nothing." />
+            <Output fields={e.output} empty="This execution returned nothing." />
           </Section>
         )}
       </div>
 
       <Section title="Timeline">
-        {h ? <Timeline tl={h.timeline} now={now} selected={node} onSelect={pick} /> : <p className="muted">Loading…</p>}
+        {h ? (
+          <Timeline tl={h.timeline} now={now} selected={node} onSelect={pick} story={h.story} onOpen={nav.show} />
+        ) : (
+          <p className="muted">Loading…</p>
+        )}
       </Section>
 
       <div className="exec-grid">
@@ -206,8 +229,64 @@ export function ExecutionPage({ ns, id, readOnly }: { ns: string; id: string; re
           </Section>
         )}
       </div>
-    </>
+    </RecordNavContext.Provider>
   );
+}
+
+/** The open records of an execution's story, shared by the story, the
+ * side panel and the timeline. The open record is kept in the location
+ * (?rec=), replaced in place, so a link opens it again. */
+function useRecordNav(ns: string, id: string, setFocus: (f: (v?: string) => string | undefined) => void): RecordNav {
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const [target, setTarget] = useState<{ rid: string; n: number }>();
+  const handled = useRef(0);
+  const cache = useRef(new Map<string, api.AttemptRecord>()).current;
+
+  const writeHash = (at?: Attempt) => {
+    try {
+      history.replaceState(history.state, "", href.execution(ns, id, at));
+    } catch {
+      // a sandboxed page may refuse: the record still opens
+    }
+  };
+  const mark = (rid: string, on: boolean) =>
+    setOpened((s) => {
+      if (s.has(rid) === on) return s;
+      const n = new Set(s);
+      if (on) n.add(rid);
+      else n.delete(rid);
+      return n;
+    });
+
+  return {
+    ns,
+    id,
+    cache,
+    target,
+    isOpen: (rid) => opened.has(rid),
+    setOpen: (at, on) => {
+      const rid = recId(at);
+      mark(rid, on);
+      if (on) writeHash(at);
+      else {
+        const cur = parseRoute(location.hash);
+        if (cur.page === "execution" && cur.rec && recId(cur.rec) === rid) writeHash(undefined);
+      }
+    },
+    show: (at) => {
+      const rid = recId(at);
+      mark(rid, true);
+      // A story narrowed to another step would hide the record.
+      setFocus((f) => (f && f !== at.node ? undefined : f));
+      setTarget((t) => ({ rid, n: (t?.n ?? 0) + 1 }));
+      writeHash(at);
+    },
+    take: (rid) => {
+      if (!target || target.rid !== rid || handled.current === target.n) return false;
+      handled.current = target.n;
+      return true;
+    },
+  };
 }
 
 function Crumbs({ ns, flow }: { ns: string; flow?: string }) {
@@ -220,7 +299,33 @@ function Crumbs({ ns, flow }: { ns: string; flow?: string }) {
   );
 }
 
-function NodeDetail({ e, node, config, tl, now }: { e: api.Execution; node?: string; config?: api.StepConfig; tl?: api.Timeline; now: number }) {
+const ATTEMPT_WORDS: Record<string, string> = {
+  done: "answered",
+  cached: "from cache",
+  retry: "failed, retried",
+  failed: "failed",
+  waiting: "asked a human",
+  cancelled: "cancelled",
+  running: "running",
+};
+
+function NodeDetail({
+  e,
+  node,
+  config,
+  tl,
+  story,
+  onOpen,
+  now,
+}: {
+  e: api.Execution;
+  node?: string;
+  config?: api.StepConfig;
+  tl?: api.Timeline;
+  story?: api.Entry[];
+  onOpen: (at: Attempt) => void;
+  now: number;
+}) {
   const gn = e.graph?.nodes.find((n) => n.id === node);
   if (!node || !gn) {
     return (
@@ -236,6 +341,8 @@ function NodeDetail({ e, node, config, tl, now }: { e: api.Execution; node?: str
     .filter((s) => Date.parse(s.start) <= now)
     .map((s) => (s.end && Date.parse(s.end) > now ? { ...s, end: undefined } : s));
   const err = e.errors.find((x) => x.node === node);
+  // The step's attempts in the story; while replaying, those begun by now.
+  const atts = (story ?? []).filter((x) => x.kind === "step" && x.node === node && Date.parse(x.time) <= now);
   const spent = spans.reduce((a, s) => ({ t: a.t + (s.tokens ?? 0), c: a.c + (s.cost_usd ?? 0) }), { t: 0, c: 0 });
 
   return (
@@ -294,6 +401,32 @@ function NodeDetail({ e, node, config, tl, now }: { e: api.Execution; node?: str
         <div className="node-error">
           <Prose text={err?.error ?? st.error ?? ""} lines={5} />
         </div>
+      )}
+      {atts.length > 0 && (
+        <>
+          <h4 className="sub">Attempts</h4>
+          <ol className="attempts">
+            {atts.map((x, i) => {
+              const at = entryAttempt(x);
+              return (
+                <li key={i} className={`o-${x.outcome ?? "none"}`}>
+                  <span className="num muted">{clock(x.end ?? x.time)}</span>
+                  <span className="attempt-outcome">{ATTEMPT_WORDS[x.outcome ?? ""] ?? x.outcome}</span>
+                  {at && (
+                    <button
+                      type="button"
+                      className="link"
+                      aria-label={`Show the record of ${node}, attempt ${at.attempt}`}
+                      onClick={() => onOpen(at)}
+                    >
+                      record
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
       )}
       {config && <StepConfig c={config} />}
     </aside>

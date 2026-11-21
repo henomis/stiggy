@@ -20,11 +20,14 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/henomis/packtrail/worker"
+	"github.com/henomis/phero/v2/llm"
 	natsagent "github.com/henomis/phero/v2/nats"
+	"github.com/henomis/phero/v2/trace"
 
 	"github.com/henomis/stiggy/internal/report"
 	"github.com/henomis/stiggy/internal/stepio"
@@ -105,7 +108,10 @@ func (rm Remote) handle(ctx context.Context, job *worker.Job, flows *flowCache) 
 
 	usage := map[string]float64{CounterAgentSteps: 1}
 
+	start := time.Now()
 	text, err := rm.prompt(ctx, job, prompt)
+	rm.record(job, prompt, text, start, err, schema)
+
 	if err != nil {
 		return nil, worker.WithUsage(err, usage)
 	}
@@ -121,6 +127,38 @@ func (rm Remote) handle(ctx context.Context, job *worker.Job, flows *flowCache) 
 	}
 
 	return &worker.Result{Output: output, Writes: writes, Usage: usage}, nil
+}
+
+// record sets the attempt's record when the remote records: the prompt
+// sent, the answer, when and how it ended. The remote's own model and tool
+// calls run elsewhere and are not in it.
+func (rm Remote) record(job *worker.Job, prompt, answer string, start time.Time, err error,
+	schema map[string]any,
+) {
+	level := rm.Spec.RecordLevel()
+	if level == spec.RecordOff {
+		return
+	}
+
+	end := time.Now()
+	call := RecordCall{
+		Start: start, End: end, Messages: []RecordMessage{{Role: llm.RoleUser, Text: prompt}}, Response: answer,
+	}
+	run := RecordRun{
+		Agent: rm.Name, Via: ViaRemote, Remote: rm.Spec.Owner + "/" + rm.Spec.Name, Output: answer,
+		Start: start, End: end, StopReason: string(trace.StopFinal), Calls: []RecordCall{call},
+	}
+
+	if err != nil {
+		run.StopReason, run.Error, run.Calls[0].Error = string(trace.StopError), err.Error(), err.Error()
+	}
+
+	rec := &Record{RecordRun: run, Version: RecordVersion, Level: level, OutputSchema: schema}
+	rec.fit(rm.Spec.RecordLimit())
+
+	if serr := job.SetRecord(rec); serr != nil {
+		job.Logger().Warn("stiggy: attempt record not stored", "err", serr)
+	}
 }
 
 // prompt sends one prompt and returns the final answer. Errors the protocol

@@ -59,6 +59,8 @@ func (c *compiler) agents() {
 			c.errorf(path+".max_parallel_tools", "must not be negative")
 		}
 
+		c.record(path, a.Record, a.RecordMaxBytes)
+
 		c.compaction(path+".compaction", a.Compaction)
 		c.permissions(path+".permissions", a.Permissions)
 		c.memory(path+".memory", a.Memory)
@@ -191,6 +193,19 @@ func (c *compiler) exposedBy(agent string) string {
 	return ""
 }
 
+// record checks an agent's or a remote's record settings.
+func (c *compiler) record(path, level string, maxBytes int) {
+	switch level {
+	case "", spec.RecordOff, spec.RecordPrompt, spec.RecordFull:
+	default:
+		c.errorf(path+".record", "must be %s, %s or %s", spec.RecordOff, spec.RecordPrompt, spec.RecordFull)
+	}
+
+	if maxBytes < 0 {
+		c.errorf(path+".record_max_bytes", "must be positive")
+	}
+}
+
 func (c *compiler) remotes() {
 	for _, name := range sortedKeys(c.fleet.Remotes) {
 		r := c.fleet.Remotes[name]
@@ -201,6 +216,8 @@ func (c *compiler) remotes() {
 		if _, clash := c.fleet.Agents[name]; clash {
 			c.errorf(path, "%q is both an agent and a remote", name)
 		}
+
+		c.record(path, r.Record, r.RecordMaxBytes)
 
 		for _, f := range [][2]string{{"owner", r.Owner}, {"name", r.Name}} {
 			if err := natsagent.ValidateSubjectToken(f[1]); err != nil {

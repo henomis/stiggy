@@ -32,18 +32,32 @@ export function duration(ms: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-/** How long ago t was, relative to now: "just now", "4m ago", "yesterday". */
+const TIME: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit" };
+
+/** The time of day of t, with seconds, in the viewer's locale. */
+const timeOf = (t: string) => new Date(t).toLocaleTimeString(undefined, TIME);
+
+/** A date with its time, to the second: "12 Nov 2026, 14:03:22". */
+export function stamp(t: string): string {
+  const d = new Date(t);
+  return `${d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}, ${timeOf(t)}`;
+}
+
+/** How long ago t was, relative to now: "just now", "4m ago", "yesterday, 14:03:22", "12 Nov 2026, 14:03:22". */
 export function ago(t: string | undefined, now = Date.now()): string {
   if (!t) return "";
   const ms = now - Date.parse(t);
   if (ms < 30_000) return "just now";
   if (ms < 86_400_000) return duration(ms).split(" ")[0] + " ago";
-  if (ms < 2 * 86_400_000) return "yesterday";
-  return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  if (ms < 2 * 86_400_000) return `yesterday, ${timeOf(t)}`;
+  return stamp(t);
 }
 
-export function clock(t: string): string {
-  return new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** The time of t, with seconds; with its date when it is not today. */
+export function clock(t: string, now = Date.now()): string {
+  const d = new Date(t);
+  if (d.toDateString() === new Date(now).toDateString()) return timeOf(t);
+  return `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${timeOf(t)}`;
 }
 
 /** The visible part of an execution id: long generated ids keep their tail. */

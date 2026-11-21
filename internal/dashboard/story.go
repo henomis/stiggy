@@ -54,6 +54,16 @@ type Entry struct {
 	Visit   int    `json:"visit,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// Key and Generation, with Attempt, identify a step's attempt, as its
+	// record is looked up (the records endpoint).
+	Key        string `json:"key,omitempty"`
+	Generation int    `json:"generation,omitempty"`
+	// Recorded is set when the attempt stored a record of what it did (an
+	// agent's record setting); the record itself is fetched apart.
+	Recorded bool `json:"recorded,omitempty"`
+	// Input is the start of the prompt the attempt put to its agent, from
+	// its record.
+	Input *InputPreview `json:"input,omitempty"`
 
 	// Text is what a step put to a human (Asks: question or review), a
 	// human's reply, or an event in words.
@@ -85,14 +95,23 @@ type storyteller struct {
 	asked map[string]string
 	// approved is the text a human approved, by key, until the step ends.
 	approved map[string]string
+	// preview reads the input of an attempt from its record.
+	preview previewer
 }
 
 // StoryOf tells the execution evs from start to end, with def for who runs
 // each step (def may be nil).
 func StoryOf(evs []event.Event, def *flow.Flow) []Entry {
+	return storyOf(evs, def, previewOf)
+}
+
+// storyOf is StoryOf, reading the input of each recorded attempt with
+// preview.
+func storyOf(evs []event.Event, def *flow.Flow, preview previewer) []Entry {
 	s := &storyteller{
 		story: []Entry{}, who: map[string][2]string{}, visits: newVisitCounter(), gens: map[string]int{},
 		started: map[string]time.Time{}, asked: map[string]string{}, approved: map[string]string{},
+		preview: preview,
 	}
 
 	if def != nil {
@@ -128,6 +147,7 @@ func (s *storyteller) add(ev event.Event) {
 	case *event.NodeFail:
 		e := s.step(d.Key, d.Node, d.Generation, d.Attempt, ev.Time)
 		e.Outcome, e.Error, e.Usage = SpanFailed, d.Error, usageOrNil(d.Usage)
+		s.recorded(&e, d.Record)
 
 		if d.WillRetry {
 			e.Outcome = SpanRetry
@@ -160,7 +180,7 @@ func (s *storyteller) step(key, node string, gen, attempt int, end time.Time) En
 	return Entry{
 		Kind: EntryStep, Time: s.started[id], End: end, Node: node,
 		Who: s.who[node][0], Role: s.who[node][1],
-		Visit: s.gens[key+"#"+strconv.Itoa(gen)], Attempt: attempt,
+		Visit: s.gens[key+"#"+strconv.Itoa(gen)], Attempt: attempt, Key: key, Generation: gen,
 	}
 }
 
@@ -190,6 +210,7 @@ func (s *storyteller) scheduled(at time.Time, d *event.Scheduled) {
 func (s *storyteller) done(at time.Time, d *event.NodeDone) {
 	e := s.step(d.Key, d.Node, d.Generation, d.Attempt, at)
 	e.Outcome, e.Next, e.Output, e.Usage = SpanDone, d.Next, FieldsOf(d.Output), usageOrNil(d.Usage)
+	s.recorded(&e, d.Record)
 
 	if d.Cached {
 		e.Outcome = SpanCached
@@ -220,6 +241,7 @@ func (s *storyteller) interrupted(at time.Time, d *event.Interrupted) {
 	}
 
 	e.Outcome, e.Usage, e.Asks = SpanWaiting, usageOrNil(d.Usage), waitQuestion
+	s.recorded(&e, d.Record)
 
 	var in interrupt
 	if len(d.Payload) > 0 && json.Unmarshal(d.Payload, &in) == nil {
@@ -236,6 +258,16 @@ func (s *storyteller) interrupted(at time.Time, d *event.Interrupted) {
 
 	s.asked[d.Key] = e.Text
 	s.story = append(s.story, e)
+}
+
+// recorded marks e as having stored record, and reads its input.
+func (s *storyteller) recorded(e *Entry, record json.RawMessage) {
+	if len(record) == 0 {
+		return
+	}
+
+	e.Recorded = true
+	e.Input = s.preview(e.Key, e.Generation, e.Attempt, record)
 }
 
 // answerText is the text of an agent's plain answer ({"text": ...}), or "".

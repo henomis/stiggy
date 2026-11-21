@@ -117,6 +117,12 @@ const textUpdated = "channels edited by hand"
 
 // HistoryOf reads evs, with def for the steps' setup (def may be nil).
 func HistoryOf(evs []event.Event, def *flow.Flow) History {
+	return historyOf(evs, def, previewOf)
+}
+
+// historyOf is HistoryOf, reading the input of each recorded attempt with
+// preview.
+func historyOf(evs []event.Event, def *flow.Flow, preview previewer) History {
 	h := &historian{
 		h: History{
 			Timeline: TimelineOf(evs), Steps: map[string]*StepHistory{},
@@ -157,7 +163,7 @@ func HistoryOf(evs []event.Event, def *flow.Flow) History {
 		}
 	}
 
-	h.h.Story = StoryOf(evs, def)
+	h.h.Story = storyOf(evs, def, preview)
 
 	return h.h
 }
